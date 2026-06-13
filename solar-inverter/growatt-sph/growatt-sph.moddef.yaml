@@ -1,0 +1,453 @@
+# Source: Growatt Inverter Modbus RTU Protocol II V1.39 (SPH/hybrid section)
+# https://www.growatt.com/ (Modbus RTU Protocol II)
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# Proprietary Growatt map (NOT SunSpec). The document numbers input (0x04) and
+# holding (0x03) registers with 0-based "NO." values, so the ModDef offset equals
+# the documented NO. directly (offset = NO.; no 30001/40001 base subtraction).
+#   - Live telemetry      -> INPUT_REGISTER (function 0x04)
+#   - Settings / setpoints -> HOLDING_REGISTER (function 0x03)
+# Multi-word values are big-endian, high word first (H register then L register):
+# byte_order BIG_ENDIAN + word_order WORD_BIG_ENDIAN. Static scaling per the doc
+# (commonly x0.1) is expressed as transform.scale.
+#
+# Telemetry registers are drawn from the SPH storage groups: NO.0-92 (first group,
+# PV / grid live data) and NO.1000-1065 ("Ninth group for Storage power").
+
+doc_id: growatt.sph
+name: Growatt SPH Hybrid Storage Inverter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  # Input register 1000 (uwSysWorkMode): values surfaced to monitoring.
+  - type_id: system_work_mode
+    name: System Work Mode
+    values:
+      - name: WAITING
+        value: 0
+      - name: SELF_TEST
+        value: 1
+      - name: RESERVED
+        value: 2
+      - name: SYS_FAULT
+        value: 3
+      - name: FLASH
+        value: 4
+      - name: PV_BAT_ONLINE
+        value: 5
+      - name: BAT_ONLINE
+        value: 6
+      - name: PV_OFFLINE
+        value: 7
+      - name: BAT_OFFLINE
+        value: 8
+  # Holding register 1044 (Priority): current energy-management priority.
+  - type_id: energy_priority
+    name: Energy Priority
+    values:
+      - name: LOAD_FIRST
+        value: 0
+      - name: BATTERY_FIRST
+        value: 1
+      - name: GRID_FIRST
+        value: 2
+  # Holding register 1092 (AC charge switch): enable/disable.
+  - type_id: enable_state
+    name: Enable State
+    values:
+      - name: DISABLED
+        value: 0
+      - name: ENABLED
+        value: 1
+
+devices:
+  - device_id: growatt-sph
+    vendor: Growatt
+    model: SPH (hybrid storage)
+    family: Growatt SPH
+    supported_transports: [MODBUS_RTU, MODBUS_TCP]
+    blocks:
+      # ---------------------------------------------------------------------
+      # Live telemetry, "First group" (input registers NO.0-92, function 0x04)
+      # ---------------------------------------------------------------------
+      - block_id: ac_live
+        name: AC / PV Live Telemetry
+        space: INPUT_REGISTER
+        start_offset: 0
+        length_words: 94
+        points:
+          - point_id: inverter_status
+            name: Inverter Status
+            description: Inverter run state (0 waiting, 1 normal, 3 fault)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              enum_ref: { type_id: system_work_mode }
+            mapping: { space: INPUT_REGISTER, offset: 0, length_words: 1 }
+            measurand: { base_quantity: inverter_status }
+
+          - point_id: pv_power_total
+            name: PV Input Power Total
+            description: Total PV input power across all MPPT strings (Ppv)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            unit: W
+            mapping:
+              space: INPUT_REGISTER
+              offset: 1
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: pv_power }
+
+          - point_id: pv1_voltage
+            name: PV1 Voltage
+            description: PV1 string DC input voltage (Vpv1)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: V
+            mapping: { space: INPUT_REGISTER, offset: 3, length_words: 1 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: pv_voltage }
+
+          - point_id: ac_output_power
+            name: AC Output Power
+            description: Total AC output (inverter) power (Pac)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            unit: W
+            mapping:
+              space: INPUT_REGISTER
+              offset: 35
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: active_power, direction: EXPORT }
+
+          - point_id: grid_frequency
+            name: Grid Frequency
+            description: Grid AC frequency (Fac)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: Hz
+            mapping: { space: INPUT_REGISTER, offset: 37, length_words: 1 }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: frequency }
+
+          - point_id: grid_voltage_l1
+            name: Grid Voltage L1
+            description: Phase 1 grid voltage (Vac1)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: V
+            mapping: { space: INPUT_REGISTER, offset: 38, length_words: 1 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+
+          - point_id: energy_today
+            name: Energy Generated Today
+            description: AC energy generated today (Eac today)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: INPUT_REGISTER
+              offset: 53
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand:
+              base_quantity: energy_active
+              direction: EXPORT
+              accumulation: DAILY
+
+          - point_id: inverter_temperature
+            name: Inverter Temperature
+            description: Inverter internal temperature (Temp1)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: degC
+            mapping: { space: INPUT_REGISTER, offset: 93, length_words: 1 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: inverter_temperature }
+
+      # ---------------------------------------------------------------------
+      # Storage telemetry, "Ninth group for Storage power"
+      # (input registers NO.1000-1065, function 0x04)
+      # ---------------------------------------------------------------------
+      - block_id: storage_live
+        name: Storage / Battery Live Telemetry
+        space: INPUT_REGISTER
+        start_offset: 1000
+        length_words: 66
+        points:
+          - point_id: system_work_mode
+            name: System Work Mode
+            description: Storage system operating mode (uwSysWorkMode)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              enum_ref: { type_id: system_work_mode }
+            mapping: { space: INPUT_REGISTER, offset: 1000, length_words: 1 }
+            measurand: { base_quantity: device_status }
+
+          - point_id: battery_discharge_power
+            name: Battery Discharge Power
+            description: Instantaneous battery discharge power (Pdischarge1)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            unit: W
+            mapping:
+              space: INPUT_REGISTER
+              offset: 1009
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: battery_power, direction: DISCHARGE }
+
+          - point_id: battery_charge_power
+            name: Battery Charge Power
+            description: Instantaneous battery charge power (Pcharge1)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            unit: W
+            mapping:
+              space: INPUT_REGISTER
+              offset: 1011
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: battery_power, direction: CHARGE }
+
+          - point_id: battery_voltage
+            name: Battery Voltage
+            description: Battery terminal voltage (Vbat)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: V
+            mapping: { space: INPUT_REGISTER, offset: 1013, length_words: 1 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: battery_voltage }
+
+          - point_id: state_of_charge
+            name: State of Charge
+            description: Battery state of charge capacity (SOC)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: "%"
+            mapping: { space: INPUT_REGISTER, offset: 1014, length_words: 1 }
+            measurand: { base_quantity: state_of_charge }
+
+          - point_id: ac_power_to_user
+            name: AC Power to User
+            description: Total AC power drawn from grid to loads (PactouserTotal)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            unit: W
+            mapping:
+              space: INPUT_REGISTER
+              offset: 1021
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: active_power, direction: IMPORT }
+
+          - point_id: ac_power_to_grid
+            name: AC Power to Grid
+            description: Total AC power exported to grid (Pactogrid total)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            unit: W
+            mapping:
+              space: INPUT_REGISTER
+              offset: 1029
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: active_power, direction: EXPORT }
+
+          - point_id: battery_temperature
+            name: Battery Temperature
+            description: Battery pack temperature (Battery Temperature)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: degC
+            mapping: { space: INPUT_REGISTER, offset: 1040, length_words: 1 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: temperature, location: INTERNAL }
+
+          - point_id: energy_to_user_today
+            name: Energy to User Today
+            description: Energy delivered from grid to loads today (Etouser today)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: INPUT_REGISTER
+              offset: 1044
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand:
+              base_quantity: energy_active
+              direction: IMPORT
+              accumulation: DAILY
+
+          - point_id: energy_to_grid_today
+            name: Energy to Grid Today
+            description: Energy exported to grid today (Etogrid today)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: INPUT_REGISTER
+              offset: 1048
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand:
+              base_quantity: energy_active
+              direction: EXPORT
+              accumulation: DAILY
+
+          - point_id: discharge_energy_total
+            name: Battery Discharge Energy Total
+            description: Lifetime battery discharge energy (Edischarge1 total)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: INPUT_REGISTER
+              offset: 1054
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand:
+              base_quantity: energy_active
+              direction: DISCHARGE
+              accumulation: REGISTER
+
+      # ---------------------------------------------------------------------
+      # Settings / setpoints (holding registers, function 0x03)
+      # ---------------------------------------------------------------------
+      - block_id: storage_settings
+        name: Storage Priority Settings
+        space: HOLDING_REGISTER
+        start_offset: 1044
+        length_words: 49
+        points:
+          - point_id: priority_mode
+            name: Energy Priority Mode
+            description: Current load/battery/grid first priority (Priority)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              enum_ref: { type_id: energy_priority }
+            mapping: { space: HOLDING_REGISTER, offset: 1044, length_words: 1 }
+            measurand: { base_quantity: device_status }
+
+          - point_id: grid_first_discharge_rate
+            name: Grid-First Discharge Power Rate
+            description: Discharge power rate when in Grid First mode (GridFirstDischargePowerRate)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: "%"
+            mapping: { space: HOLDING_REGISTER, offset: 1070, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 0, denominator: 1 }
+                max_value: { numerator: 100, denominator: 1 }
+                step: { numerator: 1, denominator: 1 }
+
+          - point_id: grid_first_stop_soc
+            name: Grid-First Stop Discharge SOC
+            description: SOC at which discharging stops when in Grid First mode (GridFirstStopSOC)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: "%"
+            mapping: { space: HOLDING_REGISTER, offset: 1071, length_words: 1 }
+            measurand: { base_quantity: state_of_charge }
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 0, denominator: 1 }
+                max_value: { numerator: 100, denominator: 1 }
+                step: { numerator: 1, denominator: 1 }
+
+          - point_id: bat_first_charge_rate
+            name: Battery-First Charge Power Rate
+            description: Charge power rate when in Battery First mode (BatFirstPowerRate)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: "%"
+            mapping: { space: HOLDING_REGISTER, offset: 1090, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 0, denominator: 1 }
+                max_value: { numerator: 100, denominator: 1 }
+                step: { numerator: 1, denominator: 1 }
+
+          - point_id: bat_first_stop_soc
+            name: Battery-First Stop Charge SOC
+            description: SOC at which charging stops when in Battery First mode (wBatFirst stop SOC)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: "%"
+            mapping: { space: HOLDING_REGISTER, offset: 1091, length_words: 1 }
+            measurand: { base_quantity: state_of_charge }
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 0, denominator: 1 }
+                max_value: { numerator: 100, denominator: 1 }
+                step: { numerator: 1, denominator: 1 }
+
+          - point_id: ac_charge_enable
+            name: AC Charge Enable
+            description: Enable charging the battery from AC grid in Battery First mode (AC charge Switch)
+            access: READ_WRITE
+            storage_type: U16
+            value_type:
+              enum_ref: { type_id: enable_state }
+            mapping: { space: HOLDING_REGISTER, offset: 1092, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]

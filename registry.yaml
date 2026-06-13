@@ -1,0 +1,166 @@
+# The ModDef blessed device registry.
+# Curated, versioned device profiles that ship as the default registry for `moddef search`.
+# Every profile lints clean (0 errors) and is derived from a vendor-confirmed register map;
+# see each profile's attribution header for the exact source. status: vendor-confirmed means
+# the register map matches vendor documentation but has not yet been verified on hardware.
+
+version: 1
+devices:
+- vendor: Fronius
+  model: Symo / Primo GEN24 Plus
+  category: solar-inverter
+  doc_id: fronius.gen24
+  profile: solar-inverter/fronius-gen24/fronius-gen24.moddef.yaml
+  transports:
+  - MODBUS_TCP
+  - MODBUS_RTU
+  points: 18
+  status: vendor-confirmed
+  source: Fronius GEN24 Modbus TCP & RTU operating instructions (doc 42,0410,2649), SunSpec models — Common
+    model (1) + int+SF three-phase inverter model 103
+  source_url: https://www.fronius.com/~/downloads/Solar%20Energy/Operating%20Instructions/42,0410,2649.pdf
+  measurands:
+  - current
+  - voltage
+  - active_power
+  - frequency
+  - energy_active
+  - inverter_temperature
+  - inverter_status
+- vendor: Growatt
+  model: SPH (hybrid storage)
+  category: solar-inverter
+  doc_id: growatt.sph
+  profile: solar-inverter/growatt-sph/growatt-sph.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  - MODBUS_TCP
+  points: 25
+  status: vendor-confirmed
+  source: Growatt Inverter Modbus RTU Protocol II V1.39 (SPH/hybrid section)
+  source_url: https://www.growatt.com/ (Modbus RTU Protocol II)
+  measurands:
+  - inverter_status
+  - pv_power
+  - pv_voltage
+  - active_power
+  - frequency
+  - voltage
+  - energy_active
+  - inverter_temperature
+  - device_status
+  - battery_power
+  - battery_voltage
+  - state_of_charge
+  - temperature
+- vendor: Victron Energy
+  model: Venus OS GX (MultiPlus-II / Quattro)
+  category: battery-storage
+  doc_id: victron.venus-os
+  profile: battery-storage/victron-venus-os/victron-venus-os.moddef.yaml
+  transports:
+  - MODBUS_TCP
+  points: 17
+  status: vendor-confirmed
+  source: Victron CCGX / Venus OS Modbus-TCP register list (CCGX-Modbus-TCP-register-list-3.73.xlsx)
+  source_url: https://www.victronenergy.com/upload/documents/CCGX-Modbus-TCP-register-list-3.73.xlsx
+  measurands:
+  - active_power
+  - battery_power
+  - battery_voltage
+  - battery_current
+  - state_of_charge
+  - pv_power
+  - pv_current
+- vendor: ABB
+  model: Terra AC Wallbox
+  category: ev-charger
+  doc_id: abb.terra-ac
+  profile: ev-charger/abb-terra-ac/abb-terra-ac.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  - MODBUS_TCP
+  points: 17
+  status: vendor-confirmed
+  source: ABB Terra AC Charger Modbus Communication v1.11 (DocID 9AKK108469A0833)
+  source_url: https://library.e.abb.com/public/982c2befa2734d259e66d76fa4a7ba77/ABB_Terra_AC_Charger_ModbusCommunication_v1.11.pdf
+  measurands:
+  - current
+  - voltage
+  - active_power
+  - energy_active
+  - fault_code
+  - device_status
+- vendor: Daikin
+  model: Altherma 3 (air-to-water)
+  category: hvac
+  doc_id: daikin.altherma-3
+  profile: hvac/daikin-altherma-3/daikin-altherma-3.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 18
+  status: vendor-confirmed
+  source: Daikin DCOM-LT/MB Modbus interface reference manual (Altherma LT)
+  source_url: https://www.daikin.eu/ (DCOM-LT/MB reference manual)
+  measurands:
+  - temperature
+  - device_status
+  - alarm_status
+- vendor: Eastron
+  model: SDM630
+  category: energy-meter
+  doc_id: eastron.sdm630
+  profile: energy-meter/eastron-sdm630/eastron-sdm630.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 18
+  status: vendor-confirmed
+  source: Eastron SDM630 Modbus Protocol Implementation V1.8 (vendor PDF)
+  source_url: https://www.eastroneurope.com/images/uploads/products/protocol/SDM630_MODBUS_Protocol.pdf
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - power_factor
+  - frequency
+  - energy_active
+  - energy_reactive
+- vendor: Carlo Gavazzi
+  model: EM24-DIN
+  category: energy-meter
+  doc_id: carlogavazzi.em24
+  profile: energy-meter/carlo-gavazzi-em24/carlo-gavazzi-em24.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 20
+  status: vendor-confirmed
+  source: Carlo Gavazzi EM24-IS SFA/SFB Communication Protocol (Modbus/JBUS RTU), Revision 2.0 — /Users/suda/Projects/ModDefOrg/research/Energy
+    Meters/Carlo Gavazzi EM24 DIN Modbus Protocol.pdf
+  source_url: https://www.gavazziautomation.com/fileadmin/images/PIM/OTHERSTUFF/COMPRO/EM24_IS_SFA_SFB.pdf
+  measurands:
+  - voltage
+  - current
+  - power_factor
+  - frequency
+  - energy_active
+  - device_status
+- vendor: ABB
+  model: B23 (B-series)
+  category: energy-meter
+  doc_id: abb.b23
+  profile: energy-meter/abb-b23/abb-b23.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 19
+  status: vendor-confirmed
+  source: ABB B23/B24 User Manual, ch. 9 Modbus (2CMC485003M0201, Rev. A, 2013-06-20)
+  source_url: https://library.e.abb.com/public/6d7783fdb45ace75c1257c3f00474022/B23_B24_User_Manual.pdf.pdf
+  measurands:
+  - energy_active
+  - active_power
+  - voltage
+  - current
+  - frequency
+  - power_factor
+  - fault_code
+  - alarm_status

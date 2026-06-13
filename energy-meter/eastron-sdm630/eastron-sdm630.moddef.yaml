@@ -1,0 +1,354 @@
+# Source: Eastron SDM630 Modbus Protocol V1.x
+# https://www.eastroneurope.com/images/uploads/products/protocol/SDM630_MODBUS_Protocol.pdf
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# Encoding notes (from the vendor protocol document):
+#   - All measured values are 32-bit IEEE-754 floating point, occupying two
+#     consecutive registers (length_words: 2). Values are pre-scaled in
+#     engineering units, so no transform.scale is applied.
+#   - Measured/calculated values live in the Input Register space and are read
+#     with Modbus function code 04 (FC04 -> INPUT_REGISTER).
+#   - Default register order is "normal": most-significant register first,
+#     which maps to byte_order BIG_ENDIAN + word_order WORD_BIG_ENDIAN.
+#   - Address convention: documented 3xxxx input registers are 1-based; the
+#     ModDef 0-based offset = (documented address) - 30001.
+#     e.g. 30001 -> offset 0, 30073 -> offset 72.
+
+doc_id: eastron.sdm630
+name: Eastron SDM630 Three-Phase Energy Meter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+devices:
+  - device_id: eastron-sdm630
+    vendor: Eastron
+    model: SDM630
+    supported_transports:
+      - MODBUS_RTU
+    blocks:
+      - block_id: measurements
+        name: Measured Values (Input Registers, FC04)
+        space: INPUT_REGISTER
+        length_words: 78
+        points:
+          # --- Per-phase line-to-neutral voltage (30001/30003/30005) ---
+          - point_id: voltage_l1_n
+            name: Voltage L1-N
+            description: Phase 1 line-to-neutral RMS voltage
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 0
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L1_N
+
+          - point_id: voltage_l2_n
+            name: Voltage L2-N
+            description: Phase 2 line-to-neutral RMS voltage
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 2
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L2_N
+
+          - point_id: voltage_l3_n
+            name: Voltage L3-N
+            description: Phase 3 line-to-neutral RMS voltage
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 4
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L3_N
+
+          # --- Per-phase current (30007/30009/30011) ---
+          - point_id: current_l1
+            name: Current L1
+            description: Phase 1 RMS line current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 6
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: A
+            measurand:
+              base_quantity: current
+              phase_ref: L1
+
+          - point_id: current_l2
+            name: Current L2
+            description: Phase 2 RMS line current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 8
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: A
+            measurand:
+              base_quantity: current
+              phase_ref: L2
+
+          - point_id: current_l3
+            name: Current L3
+            description: Phase 3 RMS line current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 10
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: A
+            measurand:
+              base_quantity: current
+              phase_ref: L3
+
+          # --- Per-phase active power (30013/30015/30017) ---
+          - point_id: active_power_l1
+            name: Active Power L1
+            description: Phase 1 active power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 12
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand:
+              base_quantity: active_power
+              phase_ref: L1
+
+          - point_id: active_power_l2
+            name: Active Power L2
+            description: Phase 2 active power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 14
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand:
+              base_quantity: active_power
+              phase_ref: L2
+
+          - point_id: active_power_l3
+            name: Active Power L3
+            description: Phase 3 active power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 16
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand:
+              base_quantity: active_power
+              phase_ref: L3
+
+          # --- Per-phase power factor (30031) ---
+          - point_id: power_factor_l1
+            name: Power Factor L1
+            description: Phase 1 power factor (signed for current direction)
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 30
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: "1"
+            measurand:
+              base_quantity: power_factor
+              phase_ref: L1
+
+          # --- Aggregates: average L-N voltage / sum of line currents ---
+          - point_id: voltage_avg_ln
+            name: Average Voltage L-N
+            description: Average of the three line-to-neutral voltages
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 42
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: V
+            measurand:
+              base_quantity: voltage
+              aggregation: AVERAGE
+
+          - point_id: current_sum
+            name: Sum of Line Currents
+            description: Sum of the three line currents
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 48
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: A
+            measurand:
+              base_quantity: current
+              aggregation: TOTAL
+
+          # --- Totals: system active power and power factor (30053/30063) ---
+          - point_id: active_power_total
+            name: Total Active Power
+            description: Total system active power across all phases
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 52
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand:
+              base_quantity: active_power
+              aggregation: TOTAL
+
+          - point_id: power_factor_total
+            name: Total Power Factor
+            description: Total system power factor
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 62
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: "1"
+            measurand:
+              base_quantity: power_factor
+              aggregation: TOTAL
+
+          # --- Frequency (30071) ---
+          - point_id: frequency
+            name: Frequency
+            description: Frequency of supply voltages
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 70
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: Hz
+            measurand:
+              base_quantity: frequency
+
+          # --- Energy totals (30073/30075/30077) ---
+          - point_id: energy_active_import_total
+            name: Total Import Active Energy
+            description: Total imported active energy register
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 72
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: kWh
+            measurand:
+              base_quantity: energy_active
+              direction: IMPORT
+              accumulation: REGISTER
+              aggregation: TOTAL
+
+          - point_id: energy_active_export_total
+            name: Total Export Active Energy
+            description: Total exported active energy register
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 74
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: kWh
+            measurand:
+              base_quantity: energy_active
+              direction: EXPORT
+              accumulation: REGISTER
+              aggregation: TOTAL
+
+          - point_id: energy_reactive_import_total
+            name: Total Import Reactive Energy
+            description: Total imported reactive energy register
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 76
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: kvarh
+            measurand:
+              base_quantity: energy_reactive
+              direction: IMPORT
+              accumulation: REGISTER
+              aggregation: TOTAL

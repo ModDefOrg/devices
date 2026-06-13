@@ -1,0 +1,346 @@
+# Source: ABB B23/B24 User Manual, ch. 9 Modbus (2CMC485003M0201)
+# https://library.e.abb.com/public/6d7783fdb45ace75c1257c3f00474022/B23_B24_User_Manual.pdf.pdf
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# Addressing convention (per manual §9.3 "Contents of the mapping tables"):
+#   The "Start Reg (Hex)" column is "expressed exactly as it is sent on the bus.
+#   That is, it should not be subtracted by 40 000 or decremented by 1." So the
+#   documented hex register IS the 0-based HOLDING_REGISTER offset already, read
+#   with Function Code 3. ModDef offset = int(StartReg_hex). Examples:
+#     0x5000 -> 20480   0x5B14 -> 23316   0x8908 -> 35080   0x8A00 -> 35328
+#
+# Endianness (manual §9.1 "Multi-register values"): the most significant byte is
+# the high byte of the first (lowest) register -> BIG_ENDIAN bytes within a word
+# and WORD_BIG_ENDIAN across words.
+#
+# Sentinels (manual §9.2 "Unused registers"): unsupported unsigned quantities
+# read 0xFFFF...; unsupported signed quantities read the max positive value
+# (0x7FFF / 0x7FFFFFFF / ...). Modeled per-point via na_values.
+
+doc_id: abb.b23
+name: ABB B23 (B-series) Energy Meter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  - type_id: current_quadrant
+    name: Current Quadrant
+    description: Electrical quadrant of the current vector (manual §9.3 Instantaneous values, 1-4)
+    values:
+      - value: 1
+        name: Q1
+        description: "Import, inductive (lagging)"
+      - value: 2
+        name: Q2
+        description: "Export, capacitive"
+      - value: 3
+        name: Q3
+        description: "Export, inductive"
+      - value: 4
+        name: Q4
+        description: "Import, capacitive (leading)"
+
+devices:
+  - device_id: abb-b23
+    vendor: ABB
+    model: B23 (B-series)
+    family: ABB B2x
+    description: ABB B23 DIN-rail three-phase energy meter, Modbus RTU over RS-485 (EQ-Bus).
+    supported_transports: [MODBUS_RTU]
+    blocks:
+      # --- Total energy accumulators (manual §9.3, 0x5000+) ---------------
+      # 64-bit accumulators (Size 4 = 4 words), resolution 0.01 kWh.
+      - block_id: energy_totals
+        name: Total Energy Accumulators
+        space: HOLDING_REGISTER
+        start_offset: 20480 # 0x5000
+        length_words: 12
+        points:
+          - point_id: active_energy_import
+            name: Active Energy Import
+            description: Cumulative imported active energy (manual 0x5000, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20480 # 0x5000
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand:
+              base_quantity: energy_active
+              direction: IMPORT
+              accumulation: REGISTER
+          - point_id: active_energy_export
+            name: Active Energy Export
+            description: Cumulative exported active energy (manual 0x5004, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20484 # 0x5004
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand:
+              base_quantity: energy_active
+              direction: EXPORT
+              accumulation: REGISTER
+          - point_id: active_energy_net
+            name: Active Energy Net
+            description: Net active energy, import minus export (manual 0x5008, S64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20488 # 0x5008
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand:
+              base_quantity: energy_active
+              direction: NET
+              accumulation: REGISTER
+
+      # --- Instantaneous values (manual §9.3, 0x5B00+) --------------------
+      - block_id: instantaneous
+        name: Instantaneous Values
+        space: HOLDING_REGISTER
+        start_offset: 23296 # 0x5B00
+        length_words: 64
+        points:
+          - point_id: voltage_l1_n
+            name: Voltage L1-N
+            description: RMS line-to-neutral voltage, phase L1 (manual 0x5B00, U16, 0.1 V).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: V
+            mapping: { space: HOLDING_REGISTER, offset: 23296 } # 0x5B00
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+          - point_id: voltage_l1_l2
+            name: Voltage L1-L2
+            description: RMS line-to-line voltage between L1 and L2 (manual 0x5B06, U16, 0.1 V).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: V
+            mapping: { space: HOLDING_REGISTER, offset: 23302 } # 0x5B06
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: voltage, phase_ref: L1_L2 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+          - point_id: current_l1
+            name: Current L1
+            description: RMS current, phase L1 (manual 0x5B0C, U16, 0.01 A).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: A
+            mapping: { space: HOLDING_REGISTER, offset: 23308 } # 0x5B0C
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: current, phase_ref: L1 }
+          - point_id: current_neutral
+            name: Current Neutral
+            description: RMS current in the neutral conductor (manual 0x5B12, U16, 0.01 A).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: A
+            mapping: { space: HOLDING_REGISTER, offset: 23314 } # 0x5B12
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: current, phase_ref: N }
+          - point_id: active_power_total
+            name: Active Power Total
+            description: Total instantaneous active power, signed by flow direction (manual 0x5B14, S32, 0.01 W).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: W
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23316 # 0x5B14
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+            na_values: [{ raw: 2147483647, meaning: not_implemented }]
+          - point_id: active_power_l1
+            name: Active Power L1
+            description: Instantaneous active power, phase L1, signed (manual 0x5B16, S32, 0.01 W).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: W
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23318 # 0x5B16
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+          - point_id: frequency
+            name: Frequency
+            description: Grid frequency (manual 0x5B2C, U16, 0.01 Hz).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: Hz
+            mapping: { space: HOLDING_REGISTER, offset: 23340 } # 0x5B2C
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: frequency }
+          - point_id: power_factor_total
+            name: Power Factor Total
+            description: Total power factor, signed -1.000 to +1.000 (manual 0x5B3A, S16, 0.001).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            unit: "1"
+            mapping: { space: HOLDING_REGISTER, offset: 23354 } # 0x5B3A
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            measurand: { base_quantity: power_factor, aggregation: TOTAL }
+          - point_id: current_quadrant_total
+            name: Current Quadrant Total
+            description: Electrical quadrant of the total current vector, 1-4 (manual 0x5B3E, U16).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: current_quadrant } }
+            mapping: { space: HOLDING_REGISTER, offset: 23358 } # 0x5B3E
+
+      # --- Production data and identification (manual §9.3, 0x8900+) ------
+      - block_id: identification
+        name: Production Data and Identification
+        space: HOLDING_REGISTER
+        start_offset: 35072 # 0x8900
+        length_words: 110
+        points:
+          - point_id: serial_number
+            name: Serial Number
+            description: Factory serial number (manual 0x8900, U32).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 35072 # 0x8900
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+          - point_id: firmware_version
+            name: Meter Firmware Version
+            description: Meter firmware version string, e.g. "1.0.0" (manual 0x8908, ASCII up to 16 chars).
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 35080 # 0x8908
+              length_words: 8
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED }
+          - point_id: type_designation
+            name: Type Designation
+            description: Meter type designation string (manual 0x8960, ASCII 12 chars incl. null termination).
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 35168 # 0x8960
+              length_words: 6
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED }
+
+      # --- Real-time clock, tariff and status flags (manual §9.3, 0x8A00+) -
+      - block_id: clock_status
+        name: Clock, Tariff and Status Flags
+        space: HOLDING_REGISTER
+        start_offset: 35328 # 0x8A00
+        length_words: 42
+        points:
+          - point_id: rtc_datetime
+            name: Real-Time Clock Date/Time
+            description: Meter RTC, packed year/month/day/hour/min/sec, byte 0 = highest byte of lowest register (manual 0x8A00, 3 words).
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: DATETIME }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 35328 # 0x8A00
+              length_words: 3
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            datetime: { encoding: SPLIT_FIELDS, width: U48 }
+          - point_id: current_tariff
+            name: Current Tariff
+            description: Active tariff register, valid range 1-4 (manual 0x8A07, U16, R/W).
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 35335 } # 0x8A07
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 1, denominator: 1 }
+                max_value: { numerator: 4, denominator: 1 }
+                allowed_values: [1, 2, 3, 4]
+          - point_id: error_flags
+            name: Error Flags
+            description: 64-bit error flag bit string (manual 0x8A13, 4 words). Bit 0 = highest byte of lowest register.
+            access: READ_ONLY
+            storage_type: U64
+            value_type:
+              flags:
+                bits:
+                  "0": device_error
+                  "1": metrology_error
+                  "2": ram_error
+                  "3": rom_error
+                  "4": eeprom_error
+                  "5": rtc_error
+                  "6": measurement_error
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 35347 # 0x8A13
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            measurand: { base_quantity: fault_code }
+          - point_id: alarm_flags
+            name: Alarm Flags
+            description: 64-bit alarm flag bit string (manual 0x8A25, 4 words). Bit 0 = highest byte of lowest register.
+            access: READ_ONLY
+            storage_type: U64
+            value_type:
+              flags:
+                bits:
+                  "0": phase_sequence_alarm
+                  "1": overvoltage_alarm
+                  "2": undervoltage_alarm
+                  "3": overcurrent_alarm
+                  "4": power_alarm
+                  "5": missing_phase_alarm
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 35365 # 0x8A25
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            measurand: { base_quantity: alarm_status }

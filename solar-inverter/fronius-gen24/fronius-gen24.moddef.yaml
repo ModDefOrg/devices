@@ -1,0 +1,275 @@
+# Source: Fronius GEN24 Modbus TCP & RTU operating instructions (doc 42,0410,2649), SunSpec models
+# https://www.fronius.com/~/downloads/Solar%20Energy/Operating%20Instructions/42,0410,2649.pdf
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# SunSpec-native profile. The GEN24 exposes a dynamic SunSpec register chain whose
+# absolute addresses shift with model composition, so points are mapped by
+# model_relative_offset and located at runtime via SUNSPEC discovery (anchor
+# candidates 0 / 40000 / 50000). Two device-side SunSpec map types exist:
+#   - "float"  : inverter models 111/112/113 (no scale-factor registers)
+#   - "int+SF" : inverter models 101/102/103 (integer values + sunssf scale regs)
+# This profile models the "int+SF" three-phase inverter model 103 (Symo) so it can
+# demonstrate register-referenced scale factors (transform.scale_ref, value = raw*10^SF),
+# alongside the Common model (1) identification block.
+#
+# Address-space / offset convention:
+#   - All SunSpec data lives in the Modbus holding-register space (read via FC 03).
+#   - The doc addresses registers 1-based with SunSpec base register 40001; the
+#     wire address sent is always (register - 1). ModDef offsets are 0-based wire
+#     offsets, so documented holding register 4xxxx -> offset = addr - 40001.
+#   - block.start_offset is the 0-based wire offset of each model's ID register
+#     (Common model ID at reg 40003 -> offset 40002; inverter model 103 ID at
+#     reg 40071 -> offset 40070, per the doc's int+SF start addresses).
+#   - point mapping.model_relative_offset is measured from the model-ID register
+#     (offset 0 = model ID, offset 1 = model length, data follows). This matches
+#     the canonical SunSpec model 1 / model 103 register layout.
+#
+# SunSpec "not implemented" sentinels (doc "Nicht vorhandene Datensaetze"):
+#   uint16 -> 0xFFFF (65535), sint16 -> 0x8000 (32768).
+
+doc_id: fronius.gen24
+name: Fronius Symo/Primo GEN24 Plus (SunSpec int+SF)
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  # SunSpec Operating Codes (St) as documented in the GEN24 manual, p.23.
+  - type_id: fronius_inverter_state
+    name: Fronius Inverter Operating State
+    description: SunSpec inverter operating code (St) reported by the GEN24
+    values:
+      - { value: 1, name: OFF }
+      - { value: 2, name: SLEEPING }
+      - { value: 3, name: STARTING }
+      - { value: 4, name: MPPT }
+      - { value: 5, name: THROTTLED }
+      - { value: 6, name: SHUTTING_DOWN }
+      - { value: 7, name: FAULT }
+      - { value: 8, name: STANDBY }
+
+devices:
+  - device_id: fronius-gen24
+    vendor: Fronius
+    model: Symo/Primo GEN24 Plus
+    family: GEN24
+    supported_transports: [MODBUS_TCP, MODBUS_RTU]
+    blocks:
+      # --- SunSpec Common model (1): device identification ---
+      # int+SF map: Common model ID register is 40003 -> wire offset 40002.
+      # Layout: offset 0 = ID(1), offset 1 = L(66), then Mn/Md/Opt/Vr/SN/DA.
+      - block_id: common
+        name: SunSpec Common Model (1)
+        space: HOLDING_REGISTER
+        start_offset: 40002
+        length_words: 68
+        discovery:
+          kind: SUNSPEC
+          anchor_candidates: [0, 40000, 50000]
+          model_id: 1
+        points:
+          - point_id: manufacturer
+            name: Manufacturer
+            description: Manufacturer name (Common model Mn); reports "Fronius"
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 2
+              length_words: 16
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED }
+          - point_id: model
+            name: Model
+            description: Device model name (Common model Md)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 18
+              length_words: 16
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED }
+          - point_id: version
+            name: Firmware Version
+            description: Software/firmware version string (Common model Vr)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 42
+              length_words: 8
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED }
+          - point_id: serial_number
+            name: Serial Number
+            description: Device serial number (Common model SN)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 50
+              length_words: 16
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED }
+
+      # --- SunSpec Inverter model (103, three-phase, int+SF): live measurements ---
+      # int+SF map: model-103 ID register is 40071 -> wire offset 40070.
+      # Offsets below are the canonical SunSpec model 103 register offsets,
+      # measured from the model-ID register (offset 0 = ID, offset 1 = L).
+      - block_id: inverter
+        name: SunSpec Inverter Model 103 (three-phase)
+        space: HOLDING_REGISTER
+        start_offset: 40070
+        length_words: 52
+        discovery:
+          kind: SUNSPEC
+          anchor_candidates: [0, 40000, 50000]
+          model_id: 103
+        points:
+          # ---- AC current (A, AphA) + shared current scale factor (A_SF) ----
+          - point_id: ac_current_sf
+            name: AC Current Scale Factor
+            description: sunssf scale factor for all AC current points (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 6 }
+          - point_id: ac_current_total
+            name: AC Total Current
+            description: Total AC output current summed across phases (model 103 A)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: A
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 2 }
+            transform: { scale_ref: { point_id: ac_current_sf, mode: POW10 } }
+            measurand: { base_quantity: current }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+          - point_id: ac_current_l1
+            name: AC Current L1
+            description: AC current on phase A / L1 (model 103 AphA)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: A
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 3 }
+            transform: { scale_ref: { point_id: ac_current_sf, mode: POW10 } }
+            measurand: { base_quantity: current, phase_ref: L1_N }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          # ---- AC voltage (line-to-neutral) + shared voltage scale factor (V_SF) ----
+          - point_id: ac_voltage_sf
+            name: AC Voltage Scale Factor
+            description: sunssf scale factor for all AC voltage points (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 13 }
+          - point_id: ac_voltage_l1_n
+            name: AC Voltage L1-N
+            description: Line-to-neutral AC voltage on phase A / L1 (model 103 PhVphA)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: V
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 10 }
+            transform: { scale_ref: { point_id: ac_voltage_sf, mode: POW10 } }
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          # ---- AC real power (W) + scale factor (W_SF) ----
+          - point_id: ac_power_sf
+            name: AC Power Scale Factor
+            description: sunssf scale factor for AC real power (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 15 }
+          - point_id: ac_power
+            name: AC Real Power
+            description: Total AC active power output (model 103 W)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            unit: W
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 14 }
+            transform: { scale_ref: { point_id: ac_power_sf, mode: POW10 } }
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          # ---- Grid frequency (Hz) + scale factor (Hz_SF) ----
+          - point_id: ac_frequency_sf
+            name: AC Frequency Scale Factor
+            description: sunssf scale factor for grid frequency (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 17 }
+          - point_id: ac_frequency
+            name: AC Frequency
+            description: AC grid frequency (model 103 Hz)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: Hz
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 16 }
+            transform: { scale_ref: { point_id: ac_frequency_sf, mode: POW10 } }
+            measurand: { base_quantity: frequency }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          # ---- Lifetime AC energy (Wh, acc32) + scale factor (WH_SF) ----
+          - point_id: ac_energy_sf
+            name: AC Energy Scale Factor
+            description: sunssf scale factor for lifetime AC energy (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 26 }
+          - point_id: ac_energy_total
+            name: AC Lifetime Energy
+            description: Total cumulative AC energy produced (model 103 WH, acc32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            unit: Wh
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 24
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale_ref: { point_id: ac_energy_sf, mode: POW10 } }
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME }
+
+          # ---- Cabinet/heatsink temperature (degC) + scale factor (Tmp_SF) ----
+          - point_id: ac_temp_sf
+            name: Temperature Scale Factor
+            description: sunssf scale factor for temperature points (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 32 }
+          - point_id: cabinet_temperature
+            name: Cabinet Temperature
+            description: Internal cabinet temperature (model 103 TmpCab)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            unit: degC
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 28 }
+            transform: { scale_ref: { point_id: ac_temp_sf, mode: POW10 } }
+            measurand: { base_quantity: inverter_temperature, location: INTERNAL }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          # ---- Operating state (St, enum16) ----
+          - point_id: operating_state
+            name: Operating State
+            description: SunSpec inverter operating code St (see fronius_inverter_state)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fronius_inverter_state } }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 38 }
+            measurand: { base_quantity: inverter_status }

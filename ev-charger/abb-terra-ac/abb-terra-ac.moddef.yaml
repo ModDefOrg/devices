@@ -1,0 +1,377 @@
+# Source: ABB Terra AC Charger Modbus Communication v1.11 (DocID 9AKK108469A0833)
+# https://library.e.abb.com/public/982c2befa2734d259e66d76fa4a7ba77/ABB_Terra_AC_Charger_ModbusCommunication_v1.11.pdf
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# Address convention:
+#   The Terra AC document addresses every register in hexadecimal (e.g. 4000h, 4100h)
+#   and §7.1.1 states all registers live in the Modbus Holding Register table, read with
+#   FC03 and written with FC06/FC16. These hex values ARE the on-the-wire (PDU) 0-based
+#   register addresses, so the ModDef offset == the documented hex value as decimal:
+#     400Ch (charging state)        -> HOLDING_REGISTER offset 16396
+#     401Ch (active power)          -> HOLDING_REGISTER offset 16412
+#     4100h (set charging current)  -> HOLDING_REGISTER offset 16640
+#     4106h (communication timeout) -> HOLDING_REGISTER offset 16646
+#   Read-only telemetry occupies 4006h..4024h; writable control occupies 4100h..4109h.
+#   These two ranges are disjoint, so they are modeled as two non-overlapping blocks.
+#
+# Scaling: the doc gives a per-register "Resolution" column. A resolution of 0.001 A on a
+# raw integer means engineering value = raw * 0.001, i.e. transform scale 1/1000.
+
+doc_id: abb.terra-ac
+name: ABB Terra AC Wallbox
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  - type_id: charging_state
+    name: Charging State
+    description: >-
+      Charger session state from register 400Ch (bits 6..0 of byte 1),
+      derived from IEC 61851-1 EVSE states.
+    values:
+      - { value: 0, name: STATE_A_IDLE }
+      - { value: 1, name: STATE_B1_PLUGGED_PENDING_AUTH }
+      - { value: 2, name: STATE_B2_EVSE_READY_PWM }
+      - { value: 3, name: STATE_C1_EV_READY_NO_PWM }
+      - { value: 4, name: STATE_C2_CHARGING }
+      - { value: 5, name: OTHERS }
+
+  - type_id: socket_lock_state
+    name: Socket Lock State
+    description: Cable / connector lock state reported by register 400Ah.
+    values:
+      - { value: 0, name: NO_CABLE }
+      - { value: 1, name: CABLE_CONNECTED_UNLOCKED }
+      - { value: 17, name: CABLE_CONNECTED_LOCKED }
+      - { value: 257, name: EV_CONNECTED_UNLOCKED }
+      - { value: 273, name: EV_CONNECTED_LOCKED }
+
+devices:
+  - device_id: abb-terra-ac
+    vendor: ABB
+    model: Terra AC Wallbox
+    supported_transports:
+      - MODBUS_RTU
+      - MODBUS_TCP
+    blocks:
+      # --- Read-only telemetry / status block: 4006h..4024h (16390..16420) ---
+      - block_id: telemetry
+        name: Telemetry and Status
+        space: HOLDING_REGISTER
+        start_offset: 16390
+        length_words: 31
+        points:
+          - point_id: user_settable_max_current
+            name: User Settable Max Current
+            description: Hardware/config maximum current settable in the Terra Config app (4006h).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16390
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: A
+            measurand:
+              base_quantity: current
+
+          - point_id: error_code
+            name: Error Code
+            description: Vendor error code; 0 means no error (4008h).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16392
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            measurand:
+              base_quantity: fault_code
+
+          - point_id: socket_lock_state
+            name: Socket Lock State
+            description: Cable/connector plug and lock state (400Ah).
+            access: READ_ONLY
+            storage_type: U32
+            value_type:
+              enum_ref: { type_id: socket_lock_state }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16394
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+          - point_id: charging_state
+            name: Charging State
+            description: IEC 61851-1 derived EVSE charging session state (400Ch).
+            access: READ_ONLY
+            storage_type: U32
+            value_type:
+              enum_ref: { type_id: charging_state }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16396
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            measurand:
+              base_quantity: device_status
+
+          - point_id: charging_current_limit
+            name: Charging Current Limit
+            description: Effective current limit chosen by charger load management (400Eh).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16398
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: A
+            measurand:
+              base_quantity: current
+
+          - point_id: charging_current_l1
+            name: Charging Current L1
+            description: Measured charging current on phase L1 (4010h).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16400
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: A
+            measurand:
+              base_quantity: current
+              phase_ref: L1
+
+          - point_id: charging_current_l2
+            name: Charging Current L2
+            description: Measured charging current on phase L2 (4012h).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16402
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: A
+            measurand:
+              base_quantity: current
+              phase_ref: L2
+
+          - point_id: charging_current_l3
+            name: Charging Current L3
+            description: Measured charging current on phase L3 (4014h).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16404
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: A
+            measurand:
+              base_quantity: current
+              phase_ref: L3
+
+          - point_id: voltage_l1
+            name: Voltage L1
+            description: Measured voltage on phase L1, L-N or L-L per grid config (4016h).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16406
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L1_N
+
+          - point_id: active_power
+            name: Active Power
+            description: Instantaneous active power delivered to the vehicle (401Ch).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16412
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand:
+              base_quantity: active_power
+              direction: IMPORT
+
+          - point_id: energy_delivered
+            name: Energy Delivered
+            description: Accumulated energy delivered in the current charging session (401Eh).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16414
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: Wh
+            measurand:
+              base_quantity: energy_active
+              direction: IMPORT
+              accumulation: REGISTER
+
+          - point_id: communication_timeout_readback
+            name: Communication Timeout (readback)
+            description: Read-back of the configured Modbus communication timeout (4020h).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16416
+              length_words: 1
+            unit: s
+
+          - point_id: fallback_limit_readback
+            name: Fallback Limit (readback)
+            description: Read-back of the fallback current limit applied after comms timeout (4024h).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16420
+              length_words: 1
+            unit: A
+            measurand:
+              base_quantity: current
+
+      # --- Writable control / command block: 4100h..4109h (16640..16649) ---
+      - block_id: control
+        name: Control and Commands
+        space: HOLDING_REGISTER
+        start_offset: 16640
+        length_words: 10
+        points:
+          - point_id: set_charging_current_limit
+            name: Set Charging Current Limit
+            description: >-
+              Writable charging current setpoint (4100h); below 6 A the session pauses,
+              at or above 6 A it resumes (IEC 61851-1).
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16640
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: A
+            measurand:
+              base_quantity: current
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 0, denominator: 1 }
+                max_value: { numerator: 32, denominator: 1 }
+                step: { numerator: 1, denominator: 1000 }
+
+          - point_id: start_stop_charging
+            name: Start/Stop Charging Session
+            description: Command to start (0) or stop (1) the charging session (4105h).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16645
+              length_words: 1
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: communication_timeout
+            name: Communication Timeout (watchdog)
+            description: >-
+              Modbus watchdog timeout in seconds (4106h); if no poll occurs within this
+              window the charger treats the link as lost.
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16646
+              length_words: 1
+            unit: s
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 10, denominator: 1 }
+                max_value: { numerator: 65535, denominator: 1 }
+                step: { numerator: 1, denominator: 1 }
+                safety_note: >-
+                  Safety watchdog: on expiry the charger drops to the fallback current
+                  limit (4109h) or, if no fallback is configured, enters error mode and
+                  stops charging. Default 60 s; do not set below the polling interval.
+
+          - point_id: set_fallback_limit
+            name: Set Fallback Limit
+            description: >-
+              Maximum current applied after the communication-timeout watchdog expires,
+              keeping a session alive on comms loss (4109h).
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16649
+              length_words: 1
+            unit: A
+            measurand:
+              base_quantity: current
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 0, denominator: 1 }
+                max_value: { numerator: 32, denominator: 1 }
+                step: { numerator: 1, denominator: 1 }

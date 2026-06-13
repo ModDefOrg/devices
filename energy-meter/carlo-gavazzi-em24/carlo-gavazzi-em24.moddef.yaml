@@ -1,0 +1,411 @@
+# Source: Carlo Gavazzi EM24-IS SFA/SFB Communication Protocol (Modbus/JBUS RTU)
+# https://www.gavazziautomation.com/fileadmin/images/PIM/OTHERSTUFF/COMPRO/EM24_IS_SFA_SFB.pdf
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# Address convention:
+#   The document lists every register twice: a 6-digit "Modicom" address (read with
+#   FC 04 Read Input Registers; FC 03 Holding Registers reads the same data — the doc
+#   states 03h and 04h "have exactly the same effect") and a "Physical address" that is
+#   the 0-based word offset placed in the frame (Modicom 300001 = physical 0000h).
+#   We model the meter via INPUT_REGISTER and use the physical word address directly as
+#   the 0-based offset (e.g. Modicom 300001 / 0000h -> offset 0; 300063 / 003Eh -> 62).
+#
+# Numeric encoding (doc §2.1):
+#   Byte order inside each word is MSB->LSB (BIG_ENDIAN). For INT32 the WORD order is
+#   LSW->MSW, i.e. the low word comes first -> word_order: WORD_LITTLE_ENDIAN.
+#   "Value weight" columns give static integer scales (Volt*10, Ampere*1000, PF*1000,
+#   Hz*10, kWh*10), modeled as STATIC rational scale = 1/weight.
+#
+# NOTE on coverage: this EM24-IS SFA/SFB instantaneous table (Table 2.3-1) exposes
+#   labelled registers only for phase/system voltage, phase current, power factor,
+#   phase sequence, frequency and imported active energy. The per-phase/total power
+#   word ranges are marked "Reserved" in this variant, so no W/var/VA points are
+#   asserted here (the map is reproduced faithfully; registers are not invented).
+
+doc_id: carlogavazzi.em24
+name: Carlo Gavazzi EM24-DIN Three-Phase Energy Meter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  - type_id: phase_sequence
+    name: Phase Sequence
+    values:
+      - name: L1_L2_L3
+        value: 0
+      - name: L1_L3_L2
+        value: -1
+
+devices:
+  - device_id: carlo-gavazzi-em24
+    vendor: Carlo Gavazzi
+    model: EM24-DIN
+    supported_transports:
+      - MODBUS_RTU
+    blocks:
+      # Table 2.3-1 — instantaneous variables and meters (physical 0000h..003Fh).
+      - block_id: instantaneous
+        name: Instantaneous Variables and Meters
+        space: INPUT_REGISTER
+        length_words: 64
+        points:
+          # --- Phase-to-neutral voltages (INT32, weight Volt*10) ---
+          - point_id: voltage_l1_n
+            name: Voltage L1-N
+            description: Phase L1 to neutral RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 0
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L1_N
+          - point_id: voltage_l2_n
+            name: Voltage L2-N
+            description: Phase L2 to neutral RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 2
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L2_N
+          - point_id: voltage_l3_n
+            name: Voltage L3-N
+            description: Phase L3 to neutral RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 4
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L3_N
+          # --- Phase-to-phase voltages (INT32, weight Volt*10) ---
+          - point_id: voltage_l1_l2
+            name: Voltage L1-L2
+            description: Phase L1 to phase L2 RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 6
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L1_L2
+          - point_id: voltage_l2_l3
+            name: Voltage L2-L3
+            description: Phase L2 to phase L3 RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 8
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L2_L3
+          - point_id: voltage_l3_l1
+            name: Voltage L3-L1
+            description: Phase L3 to phase L1 RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 10
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L3_L1
+          # --- Phase currents (INT32, weight Ampere*1000) ---
+          - point_id: current_l1
+            name: Current L1
+            description: Phase L1 RMS current
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 12
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: A
+            measurand:
+              base_quantity: current
+              phase_ref: L1
+          - point_id: current_l2
+            name: Current L2
+            description: Phase L2 RMS current
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 14
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: A
+            measurand:
+              base_quantity: current
+              phase_ref: L2
+          - point_id: current_l3
+            name: Current L3
+            description: Phase L3 RMS current
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 16
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: A
+            measurand:
+              base_quantity: current
+              phase_ref: L3
+          # --- System voltages (INT32, weight Volt*10) ---
+          - point_id: voltage_ln_sys
+            name: Voltage L-N System
+            description: System (average) phase-to-neutral voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 36
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: V
+            measurand:
+              base_quantity: voltage
+              aggregation: AVERAGE
+          - point_id: voltage_ll_sys
+            name: Voltage L-L System
+            description: System (average) phase-to-phase voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 38
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: V
+            measurand:
+              base_quantity: voltage
+              aggregation: AVERAGE
+          # --- Power factors (INT16, weight PF*1000) ---
+          - point_id: power_factor_l1
+            name: Power Factor L1
+            description: Phase L1 power factor (negative=lead/C, positive=lag/L)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 50
+              length_words: 1
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: "1"
+            measurand:
+              base_quantity: power_factor
+              phase_ref: L1
+          - point_id: power_factor_l2
+            name: Power Factor L2
+            description: Phase L2 power factor (negative=lead/C, positive=lag/L)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 51
+              length_words: 1
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: "1"
+            measurand:
+              base_quantity: power_factor
+              phase_ref: L2
+          - point_id: power_factor_l3
+            name: Power Factor L3
+            description: Phase L3 power factor (negative=lead/C, positive=lag/L)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 52
+              length_words: 1
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: "1"
+            measurand:
+              base_quantity: power_factor
+              phase_ref: L3
+          - point_id: power_factor_sys
+            name: Power Factor System
+            description: System total power factor (negative=lead/C, positive=lag/L)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 53
+              length_words: 1
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: "1"
+            measurand:
+              base_quantity: power_factor
+              aggregation: TOTAL
+          # --- Phase sequence (INT16 enum) ---
+          - point_id: phase_sequence
+            name: Phase Sequence
+            description: Measured phase rotation sequence (3-phase systems only)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              enum_ref:
+                type_id: phase_sequence
+            mapping:
+              space: INPUT_REGISTER
+              offset: 54
+              length_words: 1
+            measurand:
+              base_quantity: device_status
+          # --- Frequency (INT16, weight Hz*10) ---
+          - point_id: frequency
+            name: Frequency
+            description: Grid frequency
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 55
+              length_words: 1
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: Hz
+            measurand:
+              base_quantity: frequency
+          # --- Imported active energy total (INT32, weight kWh*10) ---
+          - point_id: energy_active_import_total
+            name: Active Energy Import Total
+            description: Total imported active energy accumulation register
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 62
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: kWh
+            measurand:
+              base_quantity: energy_active
+              direction: IMPORT
+              accumulation: REGISTER
+
+      # Table 2.4-1 / 2.6-1 — status and identification (physical 0300h, 0302h).
+      - block_id: status
+        name: Digital Input and Firmware
+        space: INPUT_REGISTER
+        length_words: 3
+        start_offset: 768
+        points:
+          # Digital input status (UINT16 bitfield; bit=1 means input open).
+          - point_id: digital_input_status
+            name: Digital Input Status
+            description: Digital input channel states (bit set = input open)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              flags:
+                bits:
+                  "0": input_ch1_open
+                  "1": input_ch2_open
+                  "2": input_ch3_open
+            mapping:
+              space: INPUT_REGISTER
+              offset: 768
+              length_words: 1
+            measurand:
+              base_quantity: device_status
+          # Firmware version/revision (UINT16: MSB major.minor nibbles, LSB revision).
+          - point_id: firmware_version
+            name: Firmware Version and Revision
+            description: Packed firmware version (MSB major/minor nibbles, LSB revision)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 770
+              length_words: 1
+            measurand:
+              base_quantity: device_status

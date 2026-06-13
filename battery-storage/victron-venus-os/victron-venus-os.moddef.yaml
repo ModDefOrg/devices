@@ -1,0 +1,381 @@
+# Source: Victron CCGX / Venus OS Modbus-TCP register list
+# https://www.victronenergy.com/upload/documents/CCGX-Modbus-TCP-register-list-3.73.xlsx
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# BESS-VIA-GATEWAY pattern
+# ------------------------
+# A Venus OS GX device is a Modbus-TCP gateway that exposes several dbus
+# services, each addressed by a *distinct Modbus unit id*. The vendor sheet
+# lists, among others:
+#   com.victronenergy.system  -> unit id 100  (aggregated system view)
+#   com.victronenergy.battery -> unit id == battery /DeviceInstance (e.g. 225)
+#   com.victronenergy.vebus   -> unit id 246  (MultiPlus-II / Quattro)
+#   com.victronenergy.grid    -> unit id == grid-meter /DeviceInstance
+# Since Venus 2.60 unit ids are assigned dynamically and equal the dbus
+# /DeviceInstance (Settings -> Integrations -> Modbus TCP server -> Available
+# services lists the live values). This profile models the SYSTEM service at the
+# default unit id 100, which already aggregates battery, grid and PV measurands.
+# The per-service register pages (.battery 256-330, .vebus 3-57, .grid 2600-2648)
+# would each be authored as their own device profile keyed on their own unit id.
+#
+# Address convention
+# ------------------
+# The "Address" column in the vendor sheet is the raw, already-0-based Modbus
+# register number (e.g. Address 840 == register 840). All registers are read as
+# holding registers, so ModDef offset = Address as-is (space HOLDING_REGISTER).
+# The vendor "Scalefactor" column is a DIVISOR: engineering value = raw / factor
+# (e.g. factor 10 -> transform scale 1/10). Factor 1 means no scaling.
+
+doc_id: victron.venus-os
+name: Victron Energy Venus OS GX (System Service)
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  - name: Active Input Source
+    type_id: active_input_source
+    values:
+      - name: UNKNOWN
+        value: 0
+      - name: GRID
+        value: 1
+      - name: GENERATOR
+        value: 2
+      - name: SHORE_POWER
+        value: 3
+      - name: NOT_CONNECTED
+        value: 240
+  - name: Battery State
+    type_id: battery_state
+    values:
+      - name: IDLE
+        value: 0
+      - name: CHARGING
+        value: 1
+      - name: DISCHARGING
+        value: 2
+
+devices:
+  - device_id: victron-venus-os
+    vendor: Victron Energy
+    model: Venus OS GX (MultiPlus-II / Quattro system)
+    supported_transports:
+      - MODBUS_TCP
+    default_unit_id: 100
+    blocks:
+      # com.victronenergy.system service (Modbus unit id 100). Registers are
+      # sparse in the vendor sheet (808..860); a single block with explicit
+      # per-point offsets covers the curated subset without overlap.
+      - block_id: system
+        name: System Aggregated Values
+        space: HOLDING_REGISTER
+        start_offset: 808
+        length_words: 60
+        points:
+          - point_id: pv_ac_output_l1_power
+            name: PV AC-coupled on output L1
+            description: AC-coupled PV inverter power on inverter output, phase L1
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 808
+              length_words: 1
+            measurand:
+              base_quantity: pv_power
+              phase_ref: L1
+              location: OUTLET
+            unit: W
+
+          - point_id: grid_l1_power
+            name: Grid L1 Power
+            description: Power exchanged with the grid on phase L1 (positive = import, negative = export)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 820
+              length_words: 1
+            measurand:
+              base_quantity: active_power
+              phase_ref: L1
+              direction: NET
+              location: GRID
+            unit: W
+
+          - point_id: grid_l2_power
+            name: Grid L2 Power
+            description: Power exchanged with the grid on phase L2 (positive = import, negative = export)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 821
+              length_words: 1
+            measurand:
+              base_quantity: active_power
+              phase_ref: L2
+              direction: NET
+              location: GRID
+            unit: W
+
+          - point_id: grid_l3_power
+            name: Grid L3 Power
+            description: Power exchanged with the grid on phase L3 (positive = import, negative = export)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 822
+              length_words: 1
+            measurand:
+              base_quantity: active_power
+              phase_ref: L3
+              direction: NET
+              location: GRID
+            unit: W
+
+          - point_id: active_input_source
+            name: Active Input Source
+            description: Source feeding the active AC input (grid, generator, shore or none)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              enum_ref:
+                type_id: active_input_source
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 826
+              length_words: 1
+
+          - point_id: battery_voltage
+            name: Battery Voltage (System)
+            description: System DC battery terminal voltage
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 840
+              length_words: 1
+            transform:
+              scale:
+                numerator: 1
+                denominator: 10
+            measurand:
+              base_quantity: battery_voltage
+              location: BATTERY
+            unit: V
+
+          - point_id: battery_current
+            name: Battery Current (System)
+            description: System DC battery current (positive = charging, negative = discharging)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 841
+              length_words: 1
+            transform:
+              scale:
+                numerator: 1
+                denominator: 10
+            measurand:
+              base_quantity: battery_current
+              direction: CHARGE
+              location: BATTERY
+            unit: A
+
+          - point_id: battery_power
+            name: Battery Power (System)
+            description: System DC battery power (positive = charging, negative = discharging)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 842
+              length_words: 1
+            measurand:
+              base_quantity: battery_power
+              direction: CHARGE
+              location: BATTERY
+            unit: W
+
+          - point_id: battery_soc
+            name: Battery State of Charge (System)
+            description: System battery state of charge
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 843
+              length_words: 1
+            measurand:
+              base_quantity: state_of_charge
+              location: BATTERY
+            unit: "%"
+
+          - point_id: battery_state
+            name: Battery State (System)
+            description: System battery operating state (idle, charging or discharging)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              enum_ref:
+                type_id: battery_state
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 844
+              length_words: 1
+
+          - point_id: pv_dc_power
+            name: PV DC-coupled Power
+            description: Total power from DC-coupled solar chargers (MPPTs)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 850
+              length_words: 1
+            measurand:
+              base_quantity: pv_power
+              location: PV
+            unit: W
+
+          - point_id: pv_dc_current
+            name: PV DC-coupled Current
+            description: Total current from DC-coupled solar chargers (MPPTs)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 851
+              length_words: 1
+            transform:
+              scale:
+                numerator: 1
+                denominator: 10
+            measurand:
+              base_quantity: pv_current
+              location: PV
+            unit: A
+
+          - point_id: charger_power
+            name: Charger Power
+            description: DC power delivered by DC chargers on the system DC bus
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 855
+              length_words: 1
+            measurand:
+              base_quantity: active_power
+              location: BATTERY
+            unit: W
+
+          - point_id: dc_system_power
+            name: DC System Power
+            description: Net DC system load power not otherwise accounted for (signed)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 860
+              length_words: 1
+            measurand:
+              base_quantity: active_power
+              direction: NET
+              location: LOAD
+            unit: W
+
+      # Directional overlay (overlay: true permits register overlap with the
+      # `system` block, MDE301). The signed grid and battery registers carry
+      # both flow directions in their sign; these points name the IMPORT/EXPORT
+      # and DISCHARGE interpretations explicitly for clients that key on a
+      # specific direction.
+      - block_id: system_directional
+        name: System Directional Views
+        space: HOLDING_REGISTER
+        start_offset: 820
+        length_words: 24
+        overlay: true
+        points:
+          - point_id: grid_l1_import_power
+            name: Grid L1 Import Power
+            description: Import (consumption) interpretation of the signed L1 grid register at 820
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 820
+              length_words: 1
+            measurand:
+              base_quantity: active_power
+              phase_ref: L1
+              direction: IMPORT
+              location: GRID
+            unit: W
+
+          - point_id: grid_l1_export_power
+            name: Grid L1 Export Power
+            description: Export (feed-in) interpretation of the signed L1 grid register at 820
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 820
+              length_words: 1
+            measurand:
+              base_quantity: active_power
+              phase_ref: L1
+              direction: EXPORT
+              location: GRID
+            unit: W
+
+          - point_id: battery_discharge_power
+            name: Battery Discharge Power (System)
+            description: Discharge interpretation of the signed battery power register at 842
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 842
+              length_words: 1
+            measurand:
+              base_quantity: battery_power
+              direction: DISCHARGE
+              location: BATTERY
+            unit: W
