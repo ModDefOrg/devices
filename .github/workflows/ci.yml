@@ -2,10 +2,17 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   lint:
+    # Fork PRs don't run CI: PRs from outside the org must be pulled
+    # into a repo branch by a maintainer first (supply-chain guard).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
