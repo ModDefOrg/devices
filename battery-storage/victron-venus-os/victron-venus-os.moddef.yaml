@@ -29,7 +29,7 @@
 
 doc_id: victron.venus-os
 name: Victron Energy Venus OS GX (System Service)
-version: 1.0.0
+version: 1.1.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
@@ -58,6 +58,44 @@ enums:
       - name: DISCHARGING
         value: 2
 
+  - name: Dynamic ESS Error
+    type_id: dess_error
+    values:
+      - name: NO_ERROR
+        value: 0
+      - name: NO_ESS
+        value: 1
+      - name: ESS_MODE
+        value: 2
+      - name: NO_MATCHING_SCHEDULE
+        value: 3
+      - name: SOC_LOW
+        value: 4
+      - name: BATTERY_CAPACITY_NOT_CONFIGURED
+        value: 5
+  - name: Dynamic ESS Restrictions
+    type_id: dess_restrictions
+    values:
+      - name: NO_RESTRICTIONS
+        value: 0
+      - name: GRID_TO_BATTERY_RESTRICTED
+        value: 1
+      - name: BATTERY_TO_GRID_RESTRICTED
+        value: 2
+      - name: NO_FLOW_BETWEEN_BATTERY_AND_GRID
+        value: 3
+  - name: Dynamic ESS Strategy
+    type_id: dess_strategy
+    values:
+      - name: TARGET_SOC
+        value: 0
+      - name: SELF_CONSUMPTION
+        value: 1
+      - name: PRO_BATTERY
+        value: 2
+      - name: PRO_GRID
+        value: 3
+
 devices:
   - device_id: victron-venus-os
     vendor: Victron Energy
@@ -72,8 +110,8 @@ devices:
       - block_id: system
         name: System Aggregated Values
         space: HOLDING_REGISTER
-        start_offset: 808
-        length_words: 60
+        start_offset: 800
+        length_words: 120
         points:
           - point_id: pv_ac_output_l1_power
             name: PV AC-coupled on output L1
@@ -315,6 +353,645 @@ devices:
               location: LOAD
             unit: W
 
+          - point_id: serial_number
+            name: Serial (System)
+            description: GX device serial - MAC address of the GX, 12 characters (address 800, string[6])
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 800
+              length_words: 6
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: FIXED_LENGTH }
+
+          - point_id: relay_1_state
+            name: GX Relay 1 State
+            description: GX relay 1 state, writable (address 806; 0 open, 1 closed)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 806, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: relay_2_state
+            name: GX Relay 2 State
+            description: GX relay 2 state, writable; available on Venus GX only (address 807; 0 open, 1 closed)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 807, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: pv_ac_output_l2_power
+            name: PV AC-coupled on output L2
+            description: AC-coupled PV inverter power on inverter output, phase L2 (address 809)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 809, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L2, location: OUTLET }
+
+          - point_id: pv_ac_output_l3_power
+            name: PV AC-coupled on output L3
+            description: AC-coupled PV inverter power on inverter output, phase L3 (address 810)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 810, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L3, location: OUTLET }
+
+          - point_id: pv_ac_input_l1_power
+            name: PV AC-coupled on input L1
+            description: AC-coupled PV inverter power on the AC input, phase L1 (address 811)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 811, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L1, location: GRID }
+
+          - point_id: pv_ac_input_l2_power
+            name: PV AC-coupled on input L2
+            description: AC-coupled PV inverter power on the AC input, phase L2 (address 812)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 812, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L2, location: GRID }
+
+          - point_id: pv_ac_input_l3_power
+            name: PV AC-coupled on input L3
+            description: AC-coupled PV inverter power on the AC input, phase L3 (address 813)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 813, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L3, location: GRID }
+
+          - point_id: pv_ac_genset_l1_power
+            name: PV AC-coupled on generator L1
+            description: AC-coupled PV inverter power on the generator input, phase L1 (address 814)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 814, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L1 }
+
+          - point_id: pv_ac_genset_l2_power
+            name: PV AC-coupled on generator L2
+            description: AC-coupled PV inverter power on the generator input, phase L2 (address 815)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 815, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L2 }
+
+          - point_id: pv_ac_genset_l3_power
+            name: PV AC-coupled on generator L3
+            description: AC-coupled PV inverter power on the generator input, phase L3 (address 816)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 816, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L3 }
+
+          - point_id: ac_consumption_l1
+            name: AC Consumption L1
+            description: Power supplied by the system to loads, phase L1 (address 817)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 817, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1, location: LOAD }
+
+          - point_id: ac_consumption_l2
+            name: AC Consumption L2
+            description: Power supplied by the system to loads, phase L2 (address 818)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 818, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2, location: LOAD }
+
+          - point_id: ac_consumption_l3
+            name: AC Consumption L3
+            description: Power supplied by the system to loads, phase L3 (address 819)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 819, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3, location: LOAD }
+
+          - point_id: genset_l1_power
+            name: Genset L1 Power
+            description: Power supplied by the generator to the system, phase L1 (address 823)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 823, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+
+          - point_id: genset_l2_power
+            name: Genset L2 Power
+            description: Power supplied by the generator to the system, phase L2 (address 824)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 824, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+
+          - point_id: genset_l3_power
+            name: Genset L3 Power
+            description: Power supplied by the generator to the system, phase L3 (address 825)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 825, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+
+          - point_id: system_time_utc
+            name: System Time UTC
+            description: GX system time as UTC epoch seconds (address 830, uint64)
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DATETIME }
+            datetime: { encoding: EPOCH_S, width: U64 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 830
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+          - point_id: gx_firmware_major
+            name: GX Firmware Major Version
+            description: GX firmware major version; render in hexadecimal for the text version (address 834)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 834, length_words: 1 }
+
+          - point_id: gx_firmware_beta
+            name: GX Firmware Beta Release
+            description: GX firmware beta release number; zero for official releases (address 835)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 835, length_words: 1 }
+
+          - point_id: battery_consumed_ah
+            name: Battery Consumed Amphours (System)
+            description: Consumed amp-hours; vendor scale factor -10, value = raw / -10 (address 845)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 845, length_words: 1 }
+            transform: { scale: { numerator: -1, denominator: 10 } }
+
+          - point_id: battery_time_to_go
+            name: Battery Time to Go (System)
+            description: Estimated time to empty in seconds; 0 means charging (address 846, vendor scale 0.01)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 846, length_words: 1 }
+            transform: { scale: { numerator: 100, denominator: 1 } }
+            unit: s
+
+          - point_id: vebus_charge_current
+            name: VE.Bus Charge Current (System)
+            description: Current flowing from the Multi to the DC system; negative is the other way (address 865)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 865, length_words: 1 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: A
+            measurand: { base_quantity: battery_current, direction: CHARGE }
+
+          - point_id: vebus_charge_power
+            name: VE.Bus Charge Power (System)
+            description: Power flowing from the Multi to the DC system; negative is the other way (address 866)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 866, length_words: 1 }
+            unit: W
+            measurand: { base_quantity: battery_power, direction: CHARGE }
+
+          - point_id: inverter_charger_current
+            name: Inverter/Charger Current
+            description: Inverter/charger DC current, 32-bit (address 868, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 868
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: A
+            measurand: { base_quantity: battery_current }
+
+          - point_id: inverter_charger_power
+            name: Inverter/Charger Power
+            description: Inverter/charger DC power, 32-bit (address 870, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 870
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: battery_power }
+
+          - point_id: consumption_on_input_l1
+            name: Consumption on Input L1
+            description: Power between meter and inverter/charger, phase L1; the Loads box on the overview (address 872, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 872
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1, location: LOAD }
+
+          - point_id: consumption_on_input_l2
+            name: Consumption on Input L2
+            description: Power between meter and inverter/charger, phase L2; the Loads box on the overview (address 874, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 874
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2, location: LOAD }
+
+          - point_id: consumption_on_input_l3
+            name: Consumption on Input L3
+            description: Power between meter and inverter/charger, phase L3; the Loads box on the overview (address 876, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 876
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3, location: LOAD }
+
+          - point_id: consumption_on_output_l1
+            name: Consumption on Output L1
+            description: Power on output of inverter/charger, phase L1 (address 878, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 878
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1, location: LOAD }
+
+          - point_id: consumption_on_output_l2
+            name: Consumption on Output L2
+            description: Power on output of inverter/charger, phase L2 (address 880, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 880
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2, location: LOAD }
+
+          - point_id: consumption_on_output_l3
+            name: Consumption on Output L3
+            description: Power on output of inverter/charger, phase L3 (address 882, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 882
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3, location: LOAD }
+
+          - point_id: pv_ac_output_l1_power32
+            name: PV AC-coupled on output L1 (32-bit)
+            description: 32-bit variant of the pv ac-coupled on output L1 power register (address 884, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 884
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L1 }
+
+          - point_id: pv_ac_output_l2_power32
+            name: PV AC-coupled on output L2 (32-bit)
+            description: 32-bit variant of the pv ac-coupled on output L2 power register (address 886, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 886
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L2 }
+
+          - point_id: pv_ac_output_l3_power32
+            name: PV AC-coupled on output L3 (32-bit)
+            description: 32-bit variant of the pv ac-coupled on output L3 power register (address 888, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 888
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L3 }
+
+          - point_id: pv_ac_input_l1_power32
+            name: PV AC-coupled on input L1 (32-bit)
+            description: 32-bit variant of the pv ac-coupled on input L1 power register (address 890, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 890
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L1 }
+
+          - point_id: pv_ac_input_l2_power32
+            name: PV AC-coupled on input L2 (32-bit)
+            description: 32-bit variant of the pv ac-coupled on input L2 power register (address 892, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 892
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L2 }
+
+          - point_id: pv_ac_input_l3_power32
+            name: PV AC-coupled on input L3 (32-bit)
+            description: 32-bit variant of the pv ac-coupled on input L3 power register (address 894, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 894
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L3 }
+
+          - point_id: pv_ac_genset_l1_power32
+            name: PV AC-coupled on generator L1 (32-bit)
+            description: 32-bit variant of the pv ac-coupled on generator L1 power register (address 896, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 896
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L1 }
+
+          - point_id: pv_ac_genset_l2_power32
+            name: PV AC-coupled on generator L2 (32-bit)
+            description: 32-bit variant of the pv ac-coupled on generator L2 power register (address 898, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 898
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L2 }
+
+          - point_id: pv_ac_genset_l3_power32
+            name: PV AC-coupled on generator L3 (32-bit)
+            description: 32-bit variant of the pv ac-coupled on generator L3 power register (address 900, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 900
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: pv_power, phase_ref: L3 }
+
+          - point_id: ac_consumption_l1_32
+            name: AC Consumption L1 (32-bit)
+            description: 32-bit variant of the AC consumption L1 register (address 902, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 902
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1, location: LOAD }
+
+          - point_id: ac_consumption_l2_32
+            name: AC Consumption L2 (32-bit)
+            description: 32-bit variant of the AC consumption L2 register (address 904, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 904
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2, location: LOAD }
+
+          - point_id: ac_consumption_l3_32
+            name: AC Consumption L3 (32-bit)
+            description: 32-bit variant of the AC consumption L3 register (address 906, uint32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 906
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3, location: LOAD }
+
+          - point_id: grid_l1_power32
+            name: Grid L1 Power (32-bit)
+            description: 32-bit variant of the grid L1 power register (address 908, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 908
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1, direction: NET, location: GRID }
+
+          - point_id: grid_l2_power32
+            name: Grid L2 Power (32-bit)
+            description: 32-bit variant of the grid L2 power register (address 910, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 910
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2, direction: NET, location: GRID }
+
+          - point_id: grid_l3_power32
+            name: Grid L3 Power (32-bit)
+            description: 32-bit variant of the grid L3 power register (address 912, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 912
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3, direction: NET, location: GRID }
+
+          - point_id: genset_l1_power32
+            name: Genset L1 Power (32-bit)
+            description: 32-bit variant of the genset L1 power register (address 914, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 914
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+
+          - point_id: genset_l2_power32
+            name: Genset L2 Power (32-bit)
+            description: 32-bit variant of the genset L2 power register (address 916, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 916
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+
+          - point_id: genset_l3_power32
+            name: Genset L3 Power (32-bit)
+            description: 32-bit variant of the genset L3 power register (address 918, int32)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 918
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+
       # Directional overlay (overlay: true permits register overlap with the
       # `system` block, MDE301). The signed grid and battery registers carry
       # both flow directions in their sign; these points name the IMPORT/EXPORT
@@ -379,3 +1056,85 @@ devices:
               direction: DISCHARGE
               location: BATTERY
             unit: W
+
+      # Dynamic ESS status page (addresses 5400-5407).
+      - block_id: dynamic_ess
+        name: Dynamic ESS Status
+        space: HOLDING_REGISTER
+        start_offset: 5400
+        length_words: 8
+        points:
+          - point_id: dess_active
+            name: Dynamic ESS State
+            description: Dynamic ESS state (address 5400; 0 off, 1 active)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 5400, length_words: 1 }
+            measurand: { base_quantity: device_status }
+
+          - point_id: dess_allow_grid_feed_in
+            name: Allow Grid Feed-In
+            description: Whether grid feed-in is allowed by Dynamic ESS (address 5401; 0 not allowed, 1 allowed)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 5401, length_words: 1 }
+
+          - point_id: dess_available
+            name: Dynamic ESS Available
+            description: Whether the system is capable of Dynamic ESS (address 5402; 0 no, 1 yes)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 5402, length_words: 1 }
+
+          - point_id: dess_charge_rate
+            name: Dynamic ESS Charge Rate
+            description: Calculated rate of charge/discharge (address 5403; vendor scale factor 0.1, value = raw x 10)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 5403, length_words: 1 }
+            transform: { scale: { numerator: 10, denominator: 1 } }
+
+          - point_id: dess_error
+            name: Dynamic ESS Error
+            description: Dynamic ESS error code (address 5404)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              enum_ref:
+                type_id: dess_error
+            mapping: { space: HOLDING_REGISTER, offset: 5404, length_words: 1 }
+            measurand: { base_quantity: fault_code }
+
+          - point_id: dess_restrictions
+            name: Dynamic ESS Active Restrictions
+            description: Active battery/grid flow restrictions (address 5405)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              enum_ref:
+                type_id: dess_restrictions
+            mapping: { space: HOLDING_REGISTER, offset: 5405, length_words: 1 }
+
+          - point_id: dess_strategy
+            name: Dynamic ESS Strategy
+            description: Strategy used for the current time slot (address 5406)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              enum_ref:
+                type_id: dess_strategy
+            mapping: { space: HOLDING_REGISTER, offset: 5406, length_words: 1 }
+
+          - point_id: dess_target_soc
+            name: Dynamic ESS Target SOC
+            description: Target state of charge for the current time slot (address 5407)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: "%"
+            mapping: { space: HOLDING_REGISTER, offset: 5407, length_words: 1 }
+            measurand: { base_quantity: state_of_charge }

@@ -22,15 +22,54 @@
 #   phase sequence, frequency and imported active energy. The per-phase/total power
 #   word ranges are marked "Reserved" in this variant, so no W/var/VA points are
 #   asserted here (the map is reproduced faithfully; registers are not invented).
+#   The Carlo Gavazzi identification code (Table 2.8-1, physical 000Bh) is omitted
+#   because it overlays the second word of the V L3-L1 INT32 at 000Ah (doc overlay
+#   quirk). Current tariff (0301h), the reset commands (3000h-3005h) and all
+#   registers marked "Reserved, don't use" are omitted per the doc. Writable
+#   configuration menus (§2.9) are modeled in HOLDING_REGISTER space (FC03/FC06);
+#   the doc states FC03 and FC04 read the same data.
 
 doc_id: carlogavazzi.em24
 name: Carlo Gavazzi EM24-DIN Three-Phase Energy Meter
-version: 1.0.0
+version: 1.1.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
 
 enums:
+  - type_id: keypad_status
+    name: Keypad Status
+    description: Front selector status (Table 2.7-1)
+    values:
+      - name: UNLOCKED
+        value: 0
+      - name: UNLOCKED_POS_1
+        value: 1
+      - name: UNLOCKED_POS_2
+        value: 2
+      - name: LOCKED
+        value: 3
+  - type_id: measuring_system
+    name: Measuring System
+    description: System configuration (Table 2.9-3); SFA/SFB models support only 3Pn
+    values:
+      - name: THREE_PHASE_NEUTRAL
+        value: 0
+      - name: THREE_PHASE_1
+        value: 1
+      - name: TWO_PHASE
+        value: 2
+      - name: SINGLE_PHASE
+        value: 3
+      - name: THREE_PHASE
+        value: 4
+  - type_id: rs485_baud
+    name: RS485 Baud Rate
+    values:
+      - name: BPS_4800
+        value: 0
+      - name: BPS_9600
+        value: 1
   - type_id: phase_sequence
     name: Phase Sequence
     values:
@@ -375,7 +414,7 @@ devices:
       - block_id: status
         name: Digital Input and Firmware
         space: INPUT_REGISTER
-        length_words: 3
+        length_words: 5
         start_offset: 768
         points:
           # Digital input status (UINT16 bitfield; bit=1 means input open).
@@ -403,9 +442,184 @@ devices:
             access: READ_ONLY
             storage_type: U16
             value_type: { primitive: UINT32 }
+            fields:
+              - field_id: major
+                name: Major
+                bit_offset: 12
+                bit_length: 4
+                value_type: { primitive: UINT32 }
+              - field_id: minor
+                name: Minor
+                bit_offset: 8
+                bit_length: 4
+                value_type: { primitive: UINT32 }
+              - field_id: revision
+                name: Revision
+                bit_offset: 0
+                bit_length: 8
+                value_type: { primitive: UINT32 }
             mapping:
               space: INPUT_REGISTER
               offset: 770
               length_words: 1
             measurand:
               base_quantity: device_status
+          # Front selector status (Table 2.7-1, physical 0304h).
+          - point_id: front_selector_status
+            name: Front Selector Status
+            description: Keypad lock state of the front selector (3 = locked)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              enum_ref: { type_id: keypad_status }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 772
+              length_words: 1
+            measurand:
+              base_quantity: device_status
+
+      # §2.9 programming parameters (read FC03, write FC06). Physical 1100h+.
+      - block_id: settings
+        name: Programming Parameters
+        space: HOLDING_REGISTER
+        start_offset: 4352 # 0x1100
+        length_words: 12
+        points:
+          - point_id: password
+            name: Password
+            description: Configuration password, 0-9999; out-of-range values are treated as 0 (Table 2.9-1, 1100h)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 4352, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 0, denominator: 1 }
+                max_value: { numerator: 9999, denominator: 1 }
+
+          - point_id: measuring_system
+            name: Measuring System
+            description: Measuring system selection; SFA/SFB models support only 3Pn (Table 2.9-3, 1102h)
+            access: READ_WRITE
+            storage_type: U16
+            value_type:
+              enum_ref: { type_id: measuring_system }
+            mapping: { space: HOLDING_REGISTER, offset: 4354, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1, 2, 3, 4]
+
+          - point_id: filter_span
+            name: Filter Span
+            description: Measurement filter span parameter, 0-100 (Table 2.9-6, 1108h)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 4360, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 0, denominator: 1 }
+                max_value: { numerator: 100, denominator: 1 }
+
+          - point_id: filter_coefficient
+            name: Filter Coefficient
+            description: Measurement filter coefficient, 1-32 (Table 2.9-6, 1109h)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 4361, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 1, denominator: 1 }
+                max_value: { numerator: 32, denominator: 1 }
+
+          - point_id: rs485_address
+            name: RS485 Instrument Address
+            description: Modbus node address, 1-247 (Table 2.9-7, 110Ah)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 4362, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 1, denominator: 1 }
+                max_value: { numerator: 247, denominator: 1 }
+
+          - point_id: rs485_baud_rate
+            name: RS485 Baud Rate
+            description: Serial baud rate; stop bits fixed at 1, parity fixed at none (Table 2.9-7, 110Bh)
+            access: READ_WRITE
+            storage_type: U16
+            value_type:
+              enum_ref: { type_id: rs485_baud }
+            mapping: { space: HOLDING_REGISTER, offset: 4363, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+      # §2.9.10 PT and CT configuration (UINT32, word order LSW->MSW). Physical 112Ch+.
+      - block_id: transformer_ratios
+        name: PT and CT Configuration
+        space: HOLDING_REGISTER
+        start_offset: 4396 # 0x112C
+        length_words: 4
+        points:
+          - point_id: ct_ratio
+            name: Current Transformer Ratio
+            description: CT ratio x10; raw 10-600000 = CT 1.0-60000.0 (Table 2.9-11, 112Ch)
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 4396
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            write:
+              behavior: DIRECT
+
+          - point_id: vt_ratio
+            name: Voltage Transformer Ratio
+            description: VT ratio x10; raw 10-60000 = VT 1.0-6000.0 (Table 2.9-11, 112Eh)
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 4398
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_LITTLE_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            write:
+              behavior: DIRECT
+
+      # §2.9.11 serial number, 2 ASCII letters per word. Physical 1300h+.
+      - block_id: serial
+        name: Serial Number
+        space: INPUT_REGISTER
+        start_offset: 4864 # 0x1300
+        length_words: 7
+        points:
+          - point_id: serial_number
+            name: Serial Number
+            description: Instrument serial number, 13 ASCII letters packed two per register (Table 2.9-12, 1300h-1306h)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 4864
+              length_words: 7
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              string_encoding: { charset: ASCII, padding: PADDING_SPACE, termination: FIXED_LENGTH }

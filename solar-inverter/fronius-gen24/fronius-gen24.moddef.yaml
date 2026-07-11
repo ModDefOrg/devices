@@ -27,10 +27,27 @@
 #
 # SunSpec "not implemented" sentinels (doc "Nicht vorhandene Datensaetze"):
 #   uint16 -> 0xFFFF (65535), sint16 -> 0x8000 (32768).
+#
+# Coverage: full int+SF model chain documented for the GEN24 -
+#   Common (1)                 ID reg 40003  -> offset 40002
+#   Inverter three-phase (103) ID reg 40071  -> offset 40070
+#   Nameplate (120)            ID reg 40121  -> offset 40120
+#   Basic Settings (121)       ID reg 40149  -> offset 40148
+#   Ext. Measurements (122)    ID reg 40181  -> offset 40180
+#   Immediate Controls (123)   ID reg 40227  -> offset 40226
+#   Multiple MPPT (160)        ID reg 40253  -> offset 40252 (4 modules: PV1,
+#                              PV2, storage charge MPP3, storage discharge MPP4)
+#   Basic Storage Control (124) ID reg 40343 -> offset 40342 (hybrid devices)
+# Note: the doc's model chain implies the inverter model occupies 50 words
+# (40071..40120), i.e. the trailing EvtVnd4 word pair of the canonical model
+# 103 layout is not exposed; points stop at EvtVnd3 accordingly.
+# Out of scope here: SunSpec 7xx DER models (Primo GEN24 208-240 US devices
+# only), the meter models (separate device behind its own Modbus unit id),
+# and the "float" register map (inverter models 111-113).
 
 doc_id: fronius.gen24
 name: Fronius Symo/Primo GEN24 Plus (SunSpec int+SF)
-version: 1.0.0
+version: 2.0.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
@@ -49,6 +66,24 @@ enums:
       - { value: 6, name: SHUTTING_DOWN }
       - { value: 7, name: FAULT }
       - { value: 8, name: STANDBY }
+
+  - type_id: storage_charge_status
+    name: Storage Charge Status
+    description: SunSpec model 124 ChaSt battery operating status
+    values:
+      - { value: 1, name: "OFF" }
+      - { value: 2, name: EMPTY }
+      - { value: 3, name: DISCHARGING }
+      - { value: 4, name: CHARGING }
+      - { value: 5, name: FULL }
+      - { value: 6, name: HOLDING }
+      - { value: 7, name: TESTING }
+  - type_id: grid_charge_set
+    name: Grid Charge Setting
+    description: SunSpec model 124 ChaGriSet charging source permission
+    values:
+      - { value: 0, name: PV_ONLY }
+      - { value: 1, name: GRID_ALLOWED }
 
 devices:
   - device_id: fronius-gen24
@@ -123,7 +158,7 @@ devices:
         name: SunSpec Inverter Model 103 (three-phase)
         space: HOLDING_REGISTER
         start_offset: 40070
-        length_words: 52
+        length_words: 50
         discovery:
           kind: SUNSPEC
           anchor_candidates: [0, 40000, 50000]
@@ -251,7 +286,7 @@ devices:
             access: READ_ONLY
             storage_type: S16
             value_type: { primitive: INT32 }
-            mapping: { space: HOLDING_REGISTER, model_relative_offset: 32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 37 }
           - point_id: cabinet_temperature
             name: Cabinet Temperature
             description: Internal cabinet temperature (model 103 TmpCab)
@@ -259,7 +294,7 @@ devices:
             storage_type: S16
             value_type: { primitive: DECIMAL }
             unit: degC
-            mapping: { space: HOLDING_REGISTER, model_relative_offset: 28 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 33 }
             transform: { scale_ref: { point_id: ac_temp_sf, mode: POW10 } }
             measurand: { base_quantity: inverter_temperature, location: INTERNAL }
             na_values: [{ raw: 32768, meaning: not_implemented }]
@@ -273,3 +308,2297 @@ devices:
             value_type: { enum_ref: { type_id: fronius_inverter_state } }
             mapping: { space: HOLDING_REGISTER, model_relative_offset: 38 }
             measurand: { base_quantity: inverter_status }
+
+          - point_id: ac_current_l2
+            name: AC Current L2
+            description: Phase B AC current (model 103 AphB)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 4 }
+            transform: { scale_ref: { point_id: ac_current_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: ac_current_l3
+            name: AC Current L3
+            description: Phase C AC current (model 103 AphC)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 5 }
+            transform: { scale_ref: { point_id: ac_current_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: ac_voltage_l1_l2
+            name: AC Voltage L1-L2
+            description: Phase AB line voltage (model 103 PPVphAB)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 7 }
+            transform: { scale_ref: { point_id: ac_voltage_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_L2 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: ac_voltage_l2_l3
+            name: AC Voltage L2-L3
+            description: Phase BC line voltage (model 103 PPVphBC)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 8 }
+            transform: { scale_ref: { point_id: ac_voltage_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_L3 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: ac_voltage_l3_l1
+            name: AC Voltage L3-L1
+            description: Phase CA line voltage (model 103 PPVphCA)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 9 }
+            transform: { scale_ref: { point_id: ac_voltage_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_L1 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: ac_voltage_l2_n
+            name: AC Voltage L2-N
+            description: Phase B to neutral voltage (model 103 PhVphB)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 11 }
+            transform: { scale_ref: { point_id: ac_voltage_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: ac_voltage_l3_n
+            name: AC Voltage L3-N
+            description: Phase C to neutral voltage (model 103 PhVphC)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 12 }
+            transform: { scale_ref: { point_id: ac_voltage_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: apparent_power_sf
+            name: Apparent Power Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 19 }
+
+          - point_id: apparent_power
+            name: AC Apparent Power
+            description: Total AC apparent power (model 103 VA)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 18 }
+            transform: { scale_ref: { point_id: apparent_power_sf, mode: POW10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: reactive_power_sf
+            name: Reactive Power Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 21 }
+
+          - point_id: reactive_power
+            name: AC Reactive Power
+            description: Total AC reactive power (model 103 VAr)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 20 }
+            transform: { scale_ref: { point_id: reactive_power_sf, mode: POW10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: power_factor_sf
+            name: Power Factor Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 23 }
+
+          - point_id: power_factor
+            name: AC Power Factor
+            description: Total AC power factor in percent of unity (model 103 PF)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 22 }
+            transform: { scale_ref: { point_id: power_factor_sf, mode: POW10 } }
+            unit: "%"
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: dc_current_sf
+            name: DC Current Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 28 }
+
+          - point_id: dc_current
+            name: DC Current
+            description: Total DC current; not implemented on multi-MPPT devices, see model 160 (model 103 DCA)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 27 }
+            transform: { scale_ref: { point_id: dc_current_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: pv_current }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: dc_voltage_sf
+            name: DC Voltage Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 30 }
+
+          - point_id: dc_voltage
+            name: DC Voltage
+            description: DC voltage; not implemented on multi-MPPT devices, see model 160 (model 103 DCV)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 29 }
+            transform: { scale_ref: { point_id: dc_voltage_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: pv_voltage }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: dc_power_sf
+            name: DC Power Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 32 }
+
+          - point_id: dc_power
+            name: DC Power
+            description: Total DC power across all inputs (model 103 DCW)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 31 }
+            transform: { scale_ref: { point_id: dc_power_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: pv_power }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: heatsink_temperature
+            name: Heatsink Temperature
+            description: Heatsink temperature (model 103 TmpSnk)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 34 }
+            transform: { scale_ref: { point_id: ac_temp_sf, mode: POW10 } }
+            unit: degC
+            measurand: { base_quantity: inverter_temperature, location: INTERNAL }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: transformer_temperature
+            name: Transformer Temperature
+            description: Transformer temperature (model 103 TmpTrns)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 35 }
+            transform: { scale_ref: { point_id: ac_temp_sf, mode: POW10 } }
+            unit: degC
+            measurand: { base_quantity: temperature, location: INTERNAL }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: other_temperature
+            name: Other Temperature
+            description: Other temperature (model 103 TmpOt)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 36 }
+            transform: { scale_ref: { point_id: ac_temp_sf, mode: POW10 } }
+            unit: degC
+            measurand: { base_quantity: temperature, location: INTERNAL }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: vendor_state
+            name: Vendor Operating State
+            description: Vendor-defined operating state (model 103 StVnd)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 39 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: event_flags_1
+            name: Event Flags 1
+            description: SunSpec event bitfield 1 (model 103 Evt1)
+            access: READ_ONLY
+            storage_type: U32
+            value_type:
+              flags:
+                bits:
+                  "0": ground_fault
+                  "1": dc_over_voltage
+                  "2": ac_disconnect
+                  "3": dc_disconnect
+                  "4": grid_disconnect
+                  "5": cabinet_open
+                  "6": manual_shutdown
+                  "7": over_temperature
+                  "8": over_frequency
+                  "9": under_frequency
+                  "10": ac_over_voltage
+                  "11": ac_under_voltage
+                  "12": blown_string_fuse
+                  "13": under_temperature
+                  "14": memory_loss
+                  "15": hw_test_failure
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 40
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            measurand: { base_quantity: alarm_status }
+
+          - point_id: event_flags_2
+            name: Event Flags 2
+            description: SunSpec event bitfield 2, reserved for future assignment (model 103 Evt2)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 42
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+          - point_id: vendor_event_1
+            name: Vendor Event Flags 1
+            description: Vendor-defined event bitfield 1 (model 103 EvtVnd1)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 44
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+          - point_id: vendor_event_2
+            name: Vendor Event Flags 2
+            description: Vendor-defined event bitfield 2 (model 103 EvtVnd2)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 46
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+          - point_id: vendor_event_3
+            name: Vendor Event Flags 3
+            description: Vendor-defined event bitfield 3 (model 103 EvtVnd3)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 48
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+      # --- SunSpec Nameplate model (120): device ratings. int+SF ID reg 40121. ---
+      - block_id: nameplate
+        name: SunSpec Nameplate Model (120)
+        space: HOLDING_REGISTER
+        start_offset: 40120
+        length_words: 28
+        discovery:
+          kind: SUNSPEC
+          anchor_candidates: [0, 40000, 50000]
+          model_id: 120
+        points:
+          - point_id: der_type
+            name: DER Type
+            description: Type of DER device; 4 = PV device (model 120 DERTyp)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 2 }
+
+          - point_id: w_rtg_sf
+            name: Power Rating Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 4 }
+
+          - point_id: power_rating
+            name: Active Power Rating
+            description: Continuous active power capability (model 120 WRtg)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 3 }
+            transform: { scale_ref: { point_id: w_rtg_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: active_power }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: va_rtg_sf
+            name: Apparent Power Rating Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 6 }
+
+          - point_id: va_rating
+            name: Apparent Power Rating
+            description: Continuous apparent power capability (model 120 VARtg)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 5 }
+            transform: { scale_ref: { point_id: va_rtg_sf, mode: POW10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: var_rtg_sf
+            name: Reactive Power Rating Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 11 }
+
+          - point_id: var_rating_q1
+            name: Reactive Power Rating Q1
+            description: Continuous reactive power capability, quadrant 1 (model 120 VArRtgQ1)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 7 }
+            transform: { scale_ref: { point_id: var_rtg_sf, mode: POW10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: var_rating_q2
+            name: Reactive Power Rating Q2
+            description: Continuous reactive power capability, quadrant 2 (model 120 VArRtgQ2)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 8 }
+            transform: { scale_ref: { point_id: var_rtg_sf, mode: POW10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: var_rating_q3
+            name: Reactive Power Rating Q3
+            description: Continuous reactive power capability, quadrant 3 (model 120 VArRtgQ3)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 9 }
+            transform: { scale_ref: { point_id: var_rtg_sf, mode: POW10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: var_rating_q4
+            name: Reactive Power Rating Q4
+            description: Continuous reactive power capability, quadrant 4 (model 120 VArRtgQ4)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 10 }
+            transform: { scale_ref: { point_id: var_rtg_sf, mode: POW10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: a_rtg_sf
+            name: Current Rating Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 13 }
+
+          - point_id: current_rating
+            name: AC Current Rating
+            description: Maximum RMS AC current capability (model 120 ARtg)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 12 }
+            transform: { scale_ref: { point_id: a_rtg_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: current }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: pf_rtg_sf
+            name: Power Factor Rating Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 18 }
+
+          - point_id: pf_rating_q1
+            name: Power Factor Rating Q1
+            description: Minimum power factor capability, quadrant 1 (model 120 PFRtgQ1)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 14 }
+            transform: { scale_ref: { point_id: pf_rtg_sf, mode: POW10 } }
+            measurand: { base_quantity: power_factor }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: pf_rating_q2
+            name: Power Factor Rating Q2
+            description: Minimum power factor capability, quadrant 2 (model 120 PFRtgQ2)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 15 }
+            transform: { scale_ref: { point_id: pf_rtg_sf, mode: POW10 } }
+            measurand: { base_quantity: power_factor }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: pf_rating_q3
+            name: Power Factor Rating Q3
+            description: Minimum power factor capability, quadrant 3 (model 120 PFRtgQ3)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 16 }
+            transform: { scale_ref: { point_id: pf_rtg_sf, mode: POW10 } }
+            measurand: { base_quantity: power_factor }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: pf_rating_q4
+            name: Power Factor Rating Q4
+            description: Minimum power factor capability, quadrant 4 (model 120 PFRtgQ4)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 17 }
+            transform: { scale_ref: { point_id: pf_rtg_sf, mode: POW10 } }
+            measurand: { base_quantity: power_factor }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: wh_rtg_sf
+            name: Energy Rating Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 20 }
+
+          - point_id: energy_rating
+            name: Nominal Energy Rating
+            description: Nominal energy rating of the storage device (model 120 WHRtg)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 19 }
+            transform: { scale_ref: { point_id: wh_rtg_sf, mode: POW10 } }
+            unit: Wh
+            measurand: { base_quantity: energy_active }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: ahr_rtg_sf
+            name: Amp-Hour Rating Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 22 }
+
+          - point_id: ah_rating
+            name: Amp-Hour Capacity Rating
+            description: Usable battery capacity in amp-hours (model 120 AhrRtg)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 21 }
+            transform: { scale_ref: { point_id: ahr_rtg_sf, mode: POW10 } }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: max_cha_rte_sf
+            name: Max Charge Rate Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 24 }
+
+          - point_id: max_charge_rate
+            name: Maximum Charge Rate
+            description: Maximum rate of energy transfer into the storage device (model 120 MaxChaRte)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 23 }
+            transform: { scale_ref: { point_id: max_cha_rte_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: charge_limit }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: max_discha_rte_sf
+            name: Max Discharge Rate Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 26 }
+
+          - point_id: max_discharge_rate
+            name: Maximum Discharge Rate
+            description: Maximum rate of energy transfer out of the storage device (model 120 MaxDisChaRte)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 25 }
+            transform: { scale_ref: { point_id: max_discha_rte_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: discharge_limit }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+
+      # --- SunSpec Basic Settings model (121). int+SF ID reg 40149. ---
+      - block_id: basic_settings
+        name: SunSpec Basic Settings Model (121)
+        space: HOLDING_REGISTER
+        start_offset: 40148
+        length_words: 32
+        discovery:
+          kind: SUNSPEC
+          anchor_candidates: [0, 40000, 50000]
+          model_id: 121
+        points:
+          - point_id: wmax_sf
+            name: WMax Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 22 }
+
+          - point_id: wmax
+            name: Maximum Output Power Setting
+            description: Maximum active power output setting (model 121 WMax)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 2 }
+            transform: { scale_ref: { point_id: wmax_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: active_power }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: vref_sf
+            name: VRef Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 23 }
+
+          - point_id: vref
+            name: Reference Voltage
+            description: Voltage at the point of common coupling, 0-400 V (model 121 VRef)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 3 }
+            transform: { scale_ref: { point_id: vref_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: voltage }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: vref_ofs_sf
+            name: VRefOfs Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 24 }
+
+          - point_id: vref_offset
+            name: Reference Voltage Offset
+            description: Offset from the PCC to the inverter connection point (model 121 VRefOfs)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 4 }
+            transform: { scale_ref: { point_id: vref_ofs_sf, mode: POW10 } }
+            unit: V
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: vminmax_sf
+            name: VMin/VMax Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 25 }
+
+          - point_id: vmax
+            name: Maximum Voltage Setting
+            description: Maximum voltage setting (model 121 VMax)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 5 }
+            transform: { scale_ref: { point_id: vminmax_sf, mode: POW10 } }
+            unit: V
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: vmin
+            name: Minimum Voltage Setting
+            description: Minimum voltage setting (model 121 VMin)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 6 }
+            transform: { scale_ref: { point_id: vminmax_sf, mode: POW10 } }
+            unit: V
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: vamax_sf
+            name: VAMax Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 26 }
+
+          - point_id: vamax
+            name: Maximum Apparent Power Setting
+            description: Maximum apparent power setting (model 121 VAMax)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 7 }
+            transform: { scale_ref: { point_id: vamax_sf, mode: POW10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: varmax_sf
+            name: VArMax Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 27 }
+
+          - point_id: varmax_q1
+            name: Maximum Reactive Power Setting Q1
+            description: Maximum reactive power setting, quadrant 1 (model 121 VArMaxQ1)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 8 }
+            transform: { scale_ref: { point_id: varmax_sf, mode: POW10 } }
+            unit: var
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: varmax_q2
+            name: Maximum Reactive Power Setting Q2
+            description: Maximum reactive power setting, quadrant 2 (model 121 VArMaxQ2)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 9 }
+            transform: { scale_ref: { point_id: varmax_sf, mode: POW10 } }
+            unit: var
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: varmax_q3
+            name: Maximum Reactive Power Setting Q3
+            description: Maximum reactive power setting, quadrant 3 (model 121 VArMaxQ3)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 10 }
+            transform: { scale_ref: { point_id: varmax_sf, mode: POW10 } }
+            unit: var
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: varmax_q4
+            name: Maximum Reactive Power Setting Q4
+            description: Maximum reactive power setting, quadrant 4 (model 121 VArMaxQ4)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 11 }
+            transform: { scale_ref: { point_id: varmax_sf, mode: POW10 } }
+            unit: var
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: wgra_sf
+            name: WGra Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 28 }
+
+          - point_id: wgra
+            name: Power Ramp Rate
+            description: Default active power ramp rate in percent of max per second (model 121 WGra)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 12 }
+            transform: { scale_ref: { point_id: wgra_sf, mode: POW10 } }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: pfmin_sf
+            name: PFMin Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 29 }
+
+          - point_id: pfmin_q1
+            name: Minimum Power Factor Setting Q1
+            description: Minimum power factor setting, quadrant 1 (model 121 PFMinQ1)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 13 }
+            transform: { scale_ref: { point_id: pfmin_sf, mode: POW10 } }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: pfmin_q2
+            name: Minimum Power Factor Setting Q2
+            description: Minimum power factor setting, quadrant 2 (model 121 PFMinQ2)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 14 }
+            transform: { scale_ref: { point_id: pfmin_sf, mode: POW10 } }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: pfmin_q3
+            name: Minimum Power Factor Setting Q3
+            description: Minimum power factor setting, quadrant 3 (model 121 PFMinQ3)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 15 }
+            transform: { scale_ref: { point_id: pfmin_sf, mode: POW10 } }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: pfmin_q4
+            name: Minimum Power Factor Setting Q4
+            description: Minimum power factor setting, quadrant 4 (model 121 PFMinQ4)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 16 }
+            transform: { scale_ref: { point_id: pfmin_sf, mode: POW10 } }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: var_act
+            name: VAr Action on Power Change
+            description: Reactive power action on active power change (model 121 VArAct)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 17 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: clc_tot_va
+            name: Total Apparent Power Calculation
+            description: Calculation method for total apparent power (model 121 ClcTotVA)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 18 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: max_rmp_rte_sf
+            name: MaxRmpRte Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 30 }
+
+          - point_id: max_rmp_rte
+            name: Maximum Ramp Rate
+            description: Setpoint for maximum ramp rate as percent of nominal per second (model 121 MaxRmpRte)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 19 }
+            transform: { scale_ref: { point_id: max_rmp_rte_sf, mode: POW10 } }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: ecp_nom_hz_sf
+            name: ECPNomHz Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 31 }
+
+          - point_id: ecp_nom_hz
+            name: Nominal Frequency at ECP
+            description: Nominal frequency at the electrical connection point (model 121 ECPNomHz)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 20 }
+            transform: { scale_ref: { point_id: ecp_nom_hz_sf, mode: POW10 } }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: conn_ph
+            name: Connected Phase
+            description: Identity of the connected phase for single-phase inverters (model 121 ConnPh)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 21 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+
+      # --- SunSpec Extended Measurements & Status model (122). int+SF ID reg 40181. ---
+      - block_id: measurements_status
+        name: SunSpec Measurements & Status Model (122)
+        space: HOLDING_REGISTER
+        start_offset: 40180
+        length_words: 46
+        discovery:
+          kind: SUNSPEC
+          anchor_candidates: [0, 40000, 50000]
+          model_id: 122
+        points:
+          - point_id: pv_conn
+            name: PV Connection Status
+            description: Inverter connection status bitfield (model 122 PVConn)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              flags:
+                bits:
+                  "0": connected
+                  "1": available
+                  "2": operating
+                  "3": test
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 2 }
+            measurand: { base_quantity: device_status }
+
+          - point_id: stor_conn
+            name: Storage Connection Status
+            description: Storage connection status bitfield (model 122 StorConn)
+            access: READ_ONLY
+            storage_type: U16
+            value_type:
+              flags:
+                bits:
+                  "0": connected
+                  "1": available
+                  "2": operating
+                  "3": test
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 3 }
+
+          - point_id: ecp_conn
+            name: ECP Connection Status
+            description: 1 while the inverter is feeding in, 0 otherwise (model 122 ECPConn)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 4 }
+            measurand: { base_quantity: device_status }
+
+          - point_id: active_energy_lifetime
+            name: Lifetime Active Energy
+            description: Lifetime active energy counter (model 122 ActWh, acc64)
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 5
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME }
+
+          - point_id: apparent_energy_lifetime
+            name: Lifetime Apparent Energy
+            description: Lifetime apparent energy counter (model 122 ActVAh, acc64)
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 9
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: VAh
+            measurand: { base_quantity: energy_apparent, accumulation: LIFETIME }
+
+          - point_id: reactive_energy_lifetime_q1
+            name: Lifetime Reactive Energy Q1
+            description: Lifetime reactive energy counter, quadrant 1 (model 122 ActVArhQ1, acc64)
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 13
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: varh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: reactive_energy_lifetime_q2
+            name: Lifetime Reactive Energy Q2
+            description: Lifetime reactive energy counter, quadrant 2 (model 122 ActVArhQ2, acc64)
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 17
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: varh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: reactive_energy_lifetime_q3
+            name: Lifetime Reactive Energy Q3
+            description: Lifetime reactive energy counter, quadrant 3 (model 122 ActVArhQ3, acc64)
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 21
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: varh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: reactive_energy_lifetime_q4
+            name: Lifetime Reactive Energy Q4
+            description: Lifetime reactive energy counter, quadrant 4 (model 122 ActVArhQ4, acc64)
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 25
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: varh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: var_aval_sf
+            name: VAr Available Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 30 }
+
+          - point_id: var_aval
+            name: Available Reactive Power
+            description: Reactive power available (model 122 VArAval)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 29 }
+            transform: { scale_ref: { point_id: var_aval_sf, mode: POW10 } }
+            unit: var
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: w_aval_sf
+            name: W Available Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 32 }
+
+          - point_id: w_aval
+            name: Available Active Power
+            description: Active power available (model 122 WAval)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 31 }
+            transform: { scale_ref: { point_id: w_aval_sf, mode: POW10 } }
+            unit: W
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: st_set_lim_msk
+            name: Setpoint Limit Mask
+            description: Bitmask of enabled setpoint limits (model 122 StSetLimMsk)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 33
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+          - point_id: st_act_ctl
+            name: Active Control Modes
+            description: Currently active inverter control modes (model 122 StActCtl)
+            access: READ_ONLY
+            storage_type: U32
+            value_type:
+              flags:
+                bits:
+                  "0": fixed_w
+                  "1": fixed_var
+                  "2": fixed_pf
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 35
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            measurand: { base_quantity: device_status }
+
+          - point_id: time_source
+            name: Time Source
+            description: Source of time synchronisation; reports the string RTC (model 122 TmSrc)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 37
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: FIXED_LENGTH }
+
+          - point_id: rtc_time
+            name: RTC Time
+            description: Seconds since 2000-01-01 00:00 UTC (model 122 Tms; note the non-Unix epoch)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 41
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: s
+
+          - point_id: ride_through_status
+            name: Ride-Through Status
+            description: Ride-through event status bitfield (model 122 RtSt)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 43 }
+
+          - point_id: ris_sf
+            name: Isolation Resistance Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 45 }
+
+          - point_id: isolation_resistance
+            name: Isolation Resistance
+            description: DC isolation resistance (model 122 Ris)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 44 }
+            transform: { scale_ref: { point_id: ris_sf, mode: POW10 } }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+
+      # --- SunSpec Immediate Controls model (123): standby, power limit, PF and reactive power control. Requires 'inverter control via Modbus' enabled in the web UI. int+SF ID reg 40227. ---
+      - block_id: immediate_controls
+        name: SunSpec Immediate Controls Model (123)
+        space: HOLDING_REGISTER
+        start_offset: 40226
+        length_words: 26
+        discovery:
+          kind: SUNSPEC
+          anchor_candidates: [0, 40000, 50000]
+          model_id: 123
+        points:
+          - point_id: conn_win_tms
+            name: Connect Window Time
+            description: Time window for connect/disconnect commands (model 123 Conn_WinTms)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 2 }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: conn_rvrt_tms
+            name: Connect Revert Time
+            description: Timeout for connect/disconnect commands (model 123 Conn_RvrtTms)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 3 }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: conn
+            name: Connect/Disconnect
+            description: 0 = standby (no feed-in), 1 = feeding operation (model 123 Conn)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 4 }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: wmax_lim_pct_sf
+            name: WMaxLimPct Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 23 }
+
+          - point_id: wmax_lim_pct
+            name: Output Power Limit Percent
+            description: Output power limit as percent of nominal, 0-100 percent (model 123 WMaxLimPct)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 5 }
+            transform: { scale_ref: { point_id: wmax_lim_pct_sf, mode: POW10 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+
+          - point_id: wmax_lim_pct_win_tms
+            name: Power Limit Window Time
+            description: Time window for the power limit change (model 123 WMaxLimPct_WinTms)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 6 }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: wmax_lim_pct_rvrt_tms
+            name: Power Limit Revert Time
+            description: Timeout after which the power limit reverts (model 123 WMaxLimPct_RvrtTms)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 7 }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: wmax_lim_pct_rmp_tms
+            name: Power Limit Ramp Time
+            description: Ramp time for the power limit change; read-only on the GEN24, writes are silently ignored (model 123 WMaxLimPct_RmpTms)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 8 }
+            unit: s
+
+          - point_id: wmax_lim_ena
+            name: Power Limit Enable
+            description: Write 1 to activate, 0 to deactivate the power limit mode (model 123 WMaxLim_Ena)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 9 }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: out_pf_set_sf
+            name: OutPFSet Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 24 }
+
+          - point_id: out_pf_set
+            name: Power Factor Setpoint
+            description: Constant power factor setpoint; positive = underexcited, negative = overexcited (model 123 OutPFSet)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 10 }
+            transform: { scale_ref: { point_id: out_pf_set_sf, mode: POW10 } }
+            measurand: { base_quantity: power_factor }
+            write:
+              behavior: DIRECT
+
+          - point_id: out_pf_set_win_tms
+            name: PF Window Time
+            description: Time window for the power factor change (model 123 OutPFSet_WinTms)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 11 }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: out_pf_set_rvrt_tms
+            name: PF Revert Time
+            description: Timeout after which the power factor reverts (model 123 OutPFSet_RvrtTms)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 12 }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: out_pf_set_rmp_tms
+            name: PF Ramp Time
+            description: Ramp time for the power factor change; not supported for writing on the GEN24 (model 123 OutPFSet_RmpTms)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 13 }
+            unit: s
+
+          - point_id: out_pf_set_ena
+            name: Power Factor Enable
+            description: Write 1 to activate, 0 to deactivate the constant power factor mode (model 123 OutPFSet_Ena)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 14 }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: var_pct_sf
+            name: VArPct Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 25 }
+
+          - point_id: var_w_max_pct
+            name: Reactive Power (of WMax)
+            description: Reactive power in percent of WMax (model 123 VArWMaxPct)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 15 }
+            transform: { scale_ref: { point_id: var_pct_sf, mode: POW10 } }
+            unit: "%"
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: var_max_pct
+            name: Reactive Power (of VArMax)
+            description: Constant relative reactive power in percent of maximum reactive power (model 123 VArMaxPct)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 16 }
+            transform: { scale_ref: { point_id: var_pct_sf, mode: POW10 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+
+          - point_id: var_aval_pct
+            name: Reactive Power (of VArAval)
+            description: Reactive power in percent of available reactive power (model 123 VArAvalPct)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 17 }
+            transform: { scale_ref: { point_id: var_pct_sf, mode: POW10 } }
+            unit: "%"
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: var_pct_win_tms
+            name: VAr Window Time
+            description: Time window for the reactive power change (model 123 VArPct_WinTms)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 18 }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: var_pct_rvrt_tms
+            name: VAr Revert Time
+            description: Timeout after which the reactive power setting reverts (model 123 VArPct_RvrtTms)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 19 }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: var_pct_rmp_tms
+            name: VAr Ramp Time
+            description: Ramp rate for the reactive power change in percent per second (model 123 VArPct_RmpTms)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 20 }
+
+          - point_id: var_pct_mod
+            name: VAr Percent Mode
+            description: Reactive power mode; the GEN24 supports percent of maximum reactive power only, read-only (model 123 VArPct_Mod)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 21 }
+
+          - point_id: var_pct_ena
+            name: Reactive Power Enable
+            description: Write 1 to activate, 0 to deactivate the constant reactive power mode (model 123 VArPct_Ena)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 22 }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+
+      # --- SunSpec Multiple MPPT Inverter Extension model (160): per-input DC values. Four modules on GEN24 storage devices (PV1, PV2, charge MPP3, discharge MPP4). int+SF ID reg 40253. ---
+      - block_id: mppt
+        name: SunSpec Multiple MPPT Model (160)
+        space: HOLDING_REGISTER
+        start_offset: 40252
+        length_words: 90
+        discovery:
+          kind: SUNSPEC
+          anchor_candidates: [0, 40000, 50000]
+          model_id: 160
+        points:
+          - point_id: mppt_dca_sf
+            name: MPPT DC Current Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 2 }
+
+          - point_id: mppt_dcv_sf
+            name: MPPT DC Voltage Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 3 }
+
+          - point_id: mppt_dcw_sf
+            name: MPPT DC Power Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 4 }
+
+          - point_id: mppt_dcwh_sf
+            name: MPPT DC Energy Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 5 }
+
+          - point_id: mppt_events
+            name: MPPT Global Events
+            description: Global events bitfield for the MPPT extension (model 160 Evt)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 6
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+          - point_id: mppt_module_count
+            name: MPPT Module Count
+            description: Number of repeating modules; 2 PV inputs plus charge/discharge blocks on storage devices (model 160 N)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 8 }
+
+          - point_id: mppt_timestamp_period
+            name: MPPT Timestamp Period
+            description: Timestamp period (model 160 TmsPer)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 9 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: pv1_id
+            name: PV String 1 Module ID
+            description: Input ID of MPPT module 1 (model 160 module 1 ID)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 10 }
+
+          - point_id: pv1_id_string
+            name: PV String 1 Module Name
+            description: Input name of MPPT module 1 (model 160 module 1 IDStr)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 11
+              length_words: 8
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: FIXED_LENGTH }
+
+          - point_id: pv1_dc_current
+            name: PV String 1 DC Current
+            description: DC current of MPPT module 1 (model 160 module 1 DCA)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 19 }
+            transform: { scale_ref: { point_id: mppt_dca_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: pv_current }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: pv1_dc_voltage
+            name: PV String 1 DC Voltage
+            description: DC voltage of MPPT module 1 (model 160 module 1 DCV)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 20 }
+            transform: { scale_ref: { point_id: mppt_dcv_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: pv_voltage }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: pv1_dc_power
+            name: PV String 1 DC Power
+            description: DC power of MPPT module 1 (model 160 module 1 DCW)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 21 }
+            transform: { scale_ref: { point_id: mppt_dcw_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: pv_power }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: pv1_dc_energy
+            name: PV String 1 Lifetime Energy
+            description: Lifetime DC energy of MPPT module 1 (model 160 module 1 DCWH, acc32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 22
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale_ref: { point_id: mppt_dcwh_sf, mode: POW10 } }
+            unit: Wh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: pv1_timestamp
+            name: PV String 1 Timestamp
+            description: Timestamp of MPPT module 1 data (model 160 module 1 Tms)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 24
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: s
+
+          - point_id: pv1_temperature
+            name: PV String 1 Temperature
+            description: Temperature of MPPT module 1 (model 160 module 1 Tmp)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 26 }
+            unit: degC
+            measurand: { base_quantity: temperature, location: INTERNAL }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: pv1_operating_state
+            name: PV String 1 Operating State
+            description: Operating state of MPPT module 1 (model 160 module 1 DCSt)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 27 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: pv1_events
+            name: PV String 1 Module Events
+            description: Module events bitfield of MPPT module 1 (model 160 module 1 DCEvt)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 28
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+          - point_id: pv2_id
+            name: PV String 2 Module ID
+            description: Input ID of MPPT module 2 (model 160 module 2 ID)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 30 }
+
+          - point_id: pv2_id_string
+            name: PV String 2 Module Name
+            description: Input name of MPPT module 2 (model 160 module 2 IDStr)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 31
+              length_words: 8
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: FIXED_LENGTH }
+
+          - point_id: pv2_dc_current
+            name: PV String 2 DC Current
+            description: DC current of MPPT module 2 (model 160 module 2 DCA)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 39 }
+            transform: { scale_ref: { point_id: mppt_dca_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: pv_current }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: pv2_dc_voltage
+            name: PV String 2 DC Voltage
+            description: DC voltage of MPPT module 2 (model 160 module 2 DCV)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 40 }
+            transform: { scale_ref: { point_id: mppt_dcv_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: pv_voltage }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: pv2_dc_power
+            name: PV String 2 DC Power
+            description: DC power of MPPT module 2 (model 160 module 2 DCW)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 41 }
+            transform: { scale_ref: { point_id: mppt_dcw_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: pv_power }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: pv2_dc_energy
+            name: PV String 2 Lifetime Energy
+            description: Lifetime DC energy of MPPT module 2 (model 160 module 2 DCWH, acc32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 42
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale_ref: { point_id: mppt_dcwh_sf, mode: POW10 } }
+            unit: Wh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: pv2_timestamp
+            name: PV String 2 Timestamp
+            description: Timestamp of MPPT module 2 data (model 160 module 2 Tms)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 44
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: s
+
+          - point_id: pv2_temperature
+            name: PV String 2 Temperature
+            description: Temperature of MPPT module 2 (model 160 module 2 Tmp)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 46 }
+            unit: degC
+            measurand: { base_quantity: temperature, location: INTERNAL }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: pv2_operating_state
+            name: PV String 2 Operating State
+            description: Operating state of MPPT module 2 (model 160 module 2 DCSt)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 47 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: pv2_events
+            name: PV String 2 Module Events
+            description: Module events bitfield of MPPT module 2 (model 160 module 2 DCEvt)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 48
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+          - point_id: storage_charge_id
+            name: Storage Charge (MPP3) Module ID
+            description: Input ID of MPPT module 3; present on devices with a storage solution (model 160 module 3 ID)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 50 }
+
+          - point_id: storage_charge_id_string
+            name: Storage Charge (MPP3) Module Name
+            description: Input name of MPPT module 3 (model 160 module 3 IDStr)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 51
+              length_words: 8
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: FIXED_LENGTH }
+
+          - point_id: storage_charge_dc_current
+            name: Storage Charge (MPP3) DC Current
+            description: DC current of MPPT module 3 (model 160 module 3 DCA)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 59 }
+            transform: { scale_ref: { point_id: mppt_dca_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: pv_current }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: storage_charge_dc_voltage
+            name: Storage Charge (MPP3) DC Voltage
+            description: DC voltage of MPPT module 3 (model 160 module 3 DCV)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 60 }
+            transform: { scale_ref: { point_id: mppt_dcv_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: pv_voltage }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: storage_charge_dc_power
+            name: Storage Charge (MPP3) DC Power
+            description: DC power of MPPT module 3 (model 160 module 3 DCW)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 61 }
+            transform: { scale_ref: { point_id: mppt_dcw_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: pv_power }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: storage_charge_dc_energy
+            name: Storage Charge (MPP3) Lifetime Energy
+            description: Lifetime DC energy of MPPT module 3 (model 160 module 3 DCWH, acc32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 62
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale_ref: { point_id: mppt_dcwh_sf, mode: POW10 } }
+            unit: Wh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: storage_charge_timestamp
+            name: Storage Charge (MPP3) Timestamp
+            description: Timestamp of MPPT module 3 data (model 160 module 3 Tms)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 64
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: s
+
+          - point_id: storage_charge_temperature
+            name: Storage Charge (MPP3) Temperature
+            description: Temperature of MPPT module 3 (model 160 module 3 Tmp)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 66 }
+            unit: degC
+            measurand: { base_quantity: temperature, location: INTERNAL }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: storage_charge_operating_state
+            name: Storage Charge (MPP3) Operating State
+            description: Operating state of MPPT module 3 (model 160 module 3 DCSt)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 67 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: storage_charge_events
+            name: Storage Charge (MPP3) Module Events
+            description: Module events bitfield of MPPT module 3 (model 160 module 3 DCEvt)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 68
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+          - point_id: storage_discharge_id
+            name: Storage Discharge (MPP4) Module ID
+            description: Input ID of MPPT module 4; present on devices with a storage solution (model 160 module 4 ID)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 70 }
+
+          - point_id: storage_discharge_id_string
+            name: Storage Discharge (MPP4) Module Name
+            description: Input name of MPPT module 4 (model 160 module 4 IDStr)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 71
+              length_words: 8
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: FIXED_LENGTH }
+
+          - point_id: storage_discharge_dc_current
+            name: Storage Discharge (MPP4) DC Current
+            description: DC current of MPPT module 4 (model 160 module 4 DCA)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 79 }
+            transform: { scale_ref: { point_id: mppt_dca_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: pv_current }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: storage_discharge_dc_voltage
+            name: Storage Discharge (MPP4) DC Voltage
+            description: DC voltage of MPPT module 4 (model 160 module 4 DCV)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 80 }
+            transform: { scale_ref: { point_id: mppt_dcv_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: pv_voltage }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: storage_discharge_dc_power
+            name: Storage Discharge (MPP4) DC Power
+            description: DC power of MPPT module 4 (model 160 module 4 DCW)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 81 }
+            transform: { scale_ref: { point_id: mppt_dcw_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: pv_power }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: storage_discharge_dc_energy
+            name: Storage Discharge (MPP4) Lifetime Energy
+            description: Lifetime DC energy of MPPT module 4 (model 160 module 4 DCWH, acc32)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 82
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale_ref: { point_id: mppt_dcwh_sf, mode: POW10 } }
+            unit: Wh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: storage_discharge_timestamp
+            name: Storage Discharge (MPP4) Timestamp
+            description: Timestamp of MPPT module 4 data (model 160 module 4 Tms)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 84
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            unit: s
+
+          - point_id: storage_discharge_temperature
+            name: Storage Discharge (MPP4) Temperature
+            description: Temperature of MPPT module 4 (model 160 module 4 Tmp)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 86 }
+            unit: degC
+            measurand: { base_quantity: temperature, location: INTERNAL }
+            na_values: [{ raw: 32768, meaning: not_implemented }]
+
+          - point_id: storage_discharge_operating_state
+            name: Storage Discharge (MPP4) Operating State
+            description: Operating state of MPPT module 4 (model 160 module 4 DCSt)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 87 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: storage_discharge_events
+            name: Storage Discharge (MPP4) Module Events
+            description: Module events bitfield of MPPT module 4 (model 160 module 4 DCEvt)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              model_relative_offset: 88
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+
+      # --- SunSpec Basic Storage Control model (124): charge/discharge window, minimum SOC and grid charging. Storage devices only; requires 'inverter control via Modbus'. int+SF ID reg 40343. ---
+      - block_id: storage_control
+        name: SunSpec Basic Storage Control Model (124)
+        space: HOLDING_REGISTER
+        start_offset: 40342
+        length_words: 26
+        discovery:
+          kind: SUNSPEC
+          anchor_candidates: [0, 40000, 50000]
+          model_id: 124
+        points:
+          - point_id: wcha_max_sf
+            name: WChaMax Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 18 }
+
+          - point_id: storage_max_charge_power
+            name: Storage Reference Power
+            description: Reference value for InWRte/OutWRte; max(MaxChaRte, MaxDisChaRte), 0 when no storage present (model 124 WChaMax)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 2 }
+            transform: { scale_ref: { point_id: wcha_max_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: charge_limit }
+            write:
+              behavior: DIRECT
+
+          - point_id: wcha_discha_gra_sf
+            name: Charge/Discharge Gradient Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 19 }
+
+          - point_id: storage_charge_gradient
+            name: Storage Charge Gradient
+            description: Maximum charge rate as percent of maximum (model 124 WChaGra)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 3 }
+            transform: { scale_ref: { point_id: wcha_discha_gra_sf, mode: POW10 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+
+          - point_id: storage_discharge_gradient
+            name: Storage Discharge Gradient
+            description: Maximum discharge rate as percent of maximum (model 124 WDisChaGra)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 4 }
+            transform: { scale_ref: { point_id: wcha_discha_gra_sf, mode: POW10 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+
+          - point_id: storage_control_mode
+            name: Storage Control Mode
+            description: Active charge/discharge limit enable bits; bit 0 charge limit, bit 1 discharge limit (model 124 StorCtl_Mod)
+            access: READ_WRITE
+            storage_type: U16
+            value_type:
+              flags:
+                bits:
+                  "0": charge_limit_active
+                  "1": discharge_limit_active
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 5 }
+            write:
+              behavior: DIRECT
+
+          - point_id: vacha_max_sf
+            name: VAChaMax Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 20 }
+
+          - point_id: storage_va_charge_max
+            name: Storage Max Charging VA
+            description: Maximum charging VA (model 124 VAChaMax)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 6 }
+            transform: { scale_ref: { point_id: vacha_max_sf, mode: POW10 } }
+            unit: VA
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+            write:
+              behavior: DIRECT
+
+          - point_id: min_rsv_pct_sf
+            name: MinRsvPct Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 21 }
+
+          - point_id: storage_min_reserve_pct
+            name: Storage Minimum Reserve
+            description: Minimum state of charge to maintain, as percent (model 124 MinRsvPct)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 7 }
+            transform: { scale_ref: { point_id: min_rsv_pct_sf, mode: POW10 } }
+            unit: "%"
+            measurand: { base_quantity: state_of_charge }
+            write:
+              behavior: DIRECT
+
+          - point_id: cha_state_sf
+            name: ChaState Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 22 }
+
+          - point_id: storage_charge_state
+            name: Storage State of Charge
+            description: Currently available energy as percent of capacity (model 124 ChaState)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 8 }
+            transform: { scale_ref: { point_id: cha_state_sf, mode: POW10 } }
+            unit: "%"
+            measurand: { base_quantity: state_of_charge }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: stor_aval_sf
+            name: StorAval Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 23 }
+
+          - point_id: storage_available
+            name: Storage Available Energy
+            description: State of charge minus reserve, times capacity (model 124 StorAval)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 9 }
+            transform: { scale_ref: { point_id: stor_aval_sf, mode: POW10 } }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: in_bat_v_sf
+            name: InBatV Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 24 }
+
+          - point_id: storage_battery_voltage
+            name: Storage Battery Voltage
+            description: Internal battery voltage (model 124 InBatV)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 10 }
+            transform: { scale_ref: { point_id: in_bat_v_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: battery_voltage }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: storage_status
+            name: Storage Charge Status
+            description: Battery operating status (model 124 ChaSt)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: storage_charge_status } }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 11 }
+            measurand: { base_quantity: device_status }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: in_out_w_rte_sf
+            name: In/OutWRte Scale Factor
+            description: sunssf scale factor register (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 25 }
+
+          - point_id: storage_discharge_rate
+            name: Storage Discharge Limit
+            description: Maximum discharge power as signed percent of WChaMax; negative values force charging (model 124 OutWRte)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 12 }
+            transform: { scale_ref: { point_id: in_out_w_rte_sf, mode: POW10 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+
+          - point_id: storage_charge_rate
+            name: Storage Charge Limit
+            description: Maximum charge power as signed percent of WChaMax; negative values force discharging (model 124 InWRte)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 13 }
+            transform: { scale_ref: { point_id: in_out_w_rte_sf, mode: POW10 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+
+          - point_id: storage_rate_win_tms
+            name: Storage Rate Window Time
+            description: Time window for charge/discharge rate changes (model 124 InOutWRte_WinTms)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 14 }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: storage_rate_rvrt_tms
+            name: Storage Rate Revert Time
+            description: Timeout after which the charge/discharge rates revert (model 124 InOutWRte_RvrtTms)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 15 }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: storage_rate_rmp_tms
+            name: Storage Rate Ramp Time
+            description: Ramp time for charge/discharge rate changes (model 124 InOutWRte_RmpTms)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 16 }
+            unit: s
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+
+          - point_id: storage_grid_charge
+            name: Grid Charging Permission
+            description: Allow (1) or forbid (0) charging the storage from the grid; ANDed with the 'allow battery charging from grid' web UI setting (model 124 ChaGriSet)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: grid_charge_set } }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 17 }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+

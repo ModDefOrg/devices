@@ -14,6 +14,12 @@
 # the high byte of the first (lowest) register -> BIG_ENDIAN bytes within a word
 # and WORD_BIG_ENDIAN across words.
 #
+# Coverage: all documented mapping tables except (a) the DMTME multimeter
+# compatibility block (0x1002+) which aliases the same quantities at lower
+# resolution for legacy DMTME masters, (b) the event/load-profile logs (§9.4,
+# cursor/windowed access), and (c) the indexed alarm configuration records
+# (§9.5.1, OBIS-coded quantity selector).
+#
 # Sentinels (manual §9.2 "Unused registers"): unsupported unsigned quantities
 # read 0xFFFF...; unsupported signed quantities read the max positive value
 # (0x7FFF / 0x7FFFFFFF / ...). Modeled per-point via na_values.
@@ -57,7 +63,7 @@ devices:
         name: Total Energy Accumulators
         space: HOLDING_REGISTER
         start_offset: 20480 # 0x5000
-        length_words: 12
+        length_words: 56
         points:
           - point_id: active_energy_import
             name: Active Energy Import
@@ -114,12 +120,858 @@ devices:
               direction: NET
               accumulation: REGISTER
 
+          - point_id: reactive_energy_import
+            name: Reactive Energy Import
+            description: Cumulative reactive energy import (manual 0x500C, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20492 # 0x500C
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: REGISTER }
+          - point_id: reactive_energy_export
+            name: Reactive Energy Export
+            description: Cumulative reactive energy export (manual 0x5010, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20496 # 0x5010
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: REGISTER }
+          - point_id: reactive_energy_net
+            name: Reactive Energy Net
+            description: Cumulative reactive energy net (manual 0x5014, S64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20500 # 0x5014
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: NET, accumulation: REGISTER }
+          - point_id: apparent_energy_import
+            name: Apparent Energy Import
+            description: Cumulative apparent energy import (manual 0x5018, U64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20504 # 0x5018
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: IMPORT, accumulation: REGISTER }
+          - point_id: apparent_energy_export
+            name: Apparent Energy Export
+            description: Cumulative apparent energy export (manual 0x501C, U64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20508 # 0x501C
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: EXPORT, accumulation: REGISTER }
+          - point_id: apparent_energy_net
+            name: Apparent Energy Net
+            description: Cumulative apparent energy net (manual 0x5020, S64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20512 # 0x5020
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: NET, accumulation: REGISTER }
+          - point_id: co2_counter
+            name: CO2 Counter
+            description: Cumulative CO2 equivalent for imported active energy, 0.001 kg per count (manual 0x5024, U64).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20516 # 0x5024
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+          - point_id: currency_counter
+            name: Currency Counter
+            description: Cumulative energy cost in configured currency, 0.001 per count (manual 0x5034, U64).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20532 # 0x5034
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+
+      # --- Energy accumulators divided into tariffs (manual §9.3, 0x5170+) ---
+      - block_id: tariff_energy
+        name: Tariff Energy Accumulators
+        space: HOLDING_REGISTER
+        start_offset: 20848 # 0x5170
+        length_words: 112
+        points:
+          - point_id: active_energy_import_t1
+            name: Active Energy Import Tariff 1
+            description: Cumulative active energy import for tariff 1 (manual 0x5170, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20848 # 0x5170
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER }
+          - point_id: active_energy_import_t2
+            name: Active Energy Import Tariff 2
+            description: Cumulative active energy import for tariff 2 (manual 0x5174, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20852 # 0x5174
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER }
+          - point_id: active_energy_import_t3
+            name: Active Energy Import Tariff 3
+            description: Cumulative active energy import for tariff 3 (manual 0x5178, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20856 # 0x5178
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER }
+          - point_id: active_energy_import_t4
+            name: Active Energy Import Tariff 4
+            description: Cumulative active energy import for tariff 4 (manual 0x517C, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20860 # 0x517C
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER }
+          - point_id: active_energy_export_t1
+            name: Active Energy Export Tariff 1
+            description: Cumulative active energy export for tariff 1 (manual 0x5190, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20880 # 0x5190
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: REGISTER }
+          - point_id: active_energy_export_t2
+            name: Active Energy Export Tariff 2
+            description: Cumulative active energy export for tariff 2 (manual 0x5194, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20884 # 0x5194
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: REGISTER }
+          - point_id: active_energy_export_t3
+            name: Active Energy Export Tariff 3
+            description: Cumulative active energy export for tariff 3 (manual 0x5198, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20888 # 0x5198
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: REGISTER }
+          - point_id: active_energy_export_t4
+            name: Active Energy Export Tariff 4
+            description: Cumulative active energy export for tariff 4 (manual 0x519C, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20892 # 0x519C
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: REGISTER }
+          - point_id: reactive_energy_import_t1
+            name: Reactive Energy Import Tariff 1
+            description: Cumulative reactive energy import for tariff 1 (manual 0x51B0, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20912 # 0x51B0
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: REGISTER }
+          - point_id: reactive_energy_import_t2
+            name: Reactive Energy Import Tariff 2
+            description: Cumulative reactive energy import for tariff 2 (manual 0x51B4, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20916 # 0x51B4
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: REGISTER }
+          - point_id: reactive_energy_import_t3
+            name: Reactive Energy Import Tariff 3
+            description: Cumulative reactive energy import for tariff 3 (manual 0x51B8, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20920 # 0x51B8
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: REGISTER }
+          - point_id: reactive_energy_import_t4
+            name: Reactive Energy Import Tariff 4
+            description: Cumulative reactive energy import for tariff 4 (manual 0x51BC, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20924 # 0x51BC
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: REGISTER }
+          - point_id: reactive_energy_export_t1
+            name: Reactive Energy Export Tariff 1
+            description: Cumulative reactive energy export for tariff 1 (manual 0x51D0, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20944 # 0x51D0
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: REGISTER }
+          - point_id: reactive_energy_export_t2
+            name: Reactive Energy Export Tariff 2
+            description: Cumulative reactive energy export for tariff 2 (manual 0x51D4, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20948 # 0x51D4
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: REGISTER }
+          - point_id: reactive_energy_export_t3
+            name: Reactive Energy Export Tariff 3
+            description: Cumulative reactive energy export for tariff 3 (manual 0x51D8, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20952 # 0x51D8
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: REGISTER }
+          - point_id: reactive_energy_export_t4
+            name: Reactive Energy Export Tariff 4
+            description: Cumulative reactive energy export for tariff 4 (manual 0x51DC, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 20956 # 0x51DC
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: REGISTER }
+
+      # --- Energy accumulators per phase (manual §9.3, 0x5460+) ---
+      - block_id: phase_energy
+        name: Per-Phase Energy Accumulators
+        space: HOLDING_REGISTER
+        start_offset: 21600 # 0x5460
+        length_words: 108
+        points:
+          - point_id: active_energy_import_l1
+            name: Active Energy Import L1
+            description: Cumulative active import energy, phase L1 (manual 0x5460, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21600 # 0x5460
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER, phase_ref: L1 }
+          - point_id: active_energy_import_l2
+            name: Active Energy Import L2
+            description: Cumulative active import energy, phase L2 (manual 0x5464, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21604 # 0x5464
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER, phase_ref: L2 }
+          - point_id: active_energy_import_l3
+            name: Active Energy Import L3
+            description: Cumulative active import energy, phase L3 (manual 0x5468, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21608 # 0x5468
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER, phase_ref: L3 }
+          - point_id: active_energy_export_l1
+            name: Active Energy Export L1
+            description: Cumulative active export energy, phase L1 (manual 0x546C, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21612 # 0x546C
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: REGISTER, phase_ref: L1 }
+          - point_id: active_energy_export_l2
+            name: Active Energy Export L2
+            description: Cumulative active export energy, phase L2 (manual 0x5470, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21616 # 0x5470
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: REGISTER, phase_ref: L2 }
+          - point_id: active_energy_export_l3
+            name: Active Energy Export L3
+            description: Cumulative active export energy, phase L3 (manual 0x5474, U64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21620 # 0x5474
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: REGISTER, phase_ref: L3 }
+          - point_id: active_energy_net_l1
+            name: Active Energy Net L1
+            description: Cumulative active net energy, phase L1 (manual 0x5478, S64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21624 # 0x5478
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: NET, accumulation: REGISTER, phase_ref: L1 }
+          - point_id: active_energy_net_l2
+            name: Active Energy Net L2
+            description: Cumulative active net energy, phase L2 (manual 0x547C, S64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21628 # 0x547C
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: NET, accumulation: REGISTER, phase_ref: L2 }
+          - point_id: active_energy_net_l3
+            name: Active Energy Net L3
+            description: Cumulative active net energy, phase L3 (manual 0x5480, S64, 0.01 kWh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21632 # 0x5480
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: NET, accumulation: REGISTER, phase_ref: L3 }
+          - point_id: reactive_energy_import_l1
+            name: Reactive Energy Import L1
+            description: Cumulative reactive import energy, phase L1 (manual 0x5484, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21636 # 0x5484
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: REGISTER, phase_ref: L1 }
+          - point_id: reactive_energy_import_l2
+            name: Reactive Energy Import L2
+            description: Cumulative reactive import energy, phase L2 (manual 0x5488, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21640 # 0x5488
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: REGISTER, phase_ref: L2 }
+          - point_id: reactive_energy_import_l3
+            name: Reactive Energy Import L3
+            description: Cumulative reactive import energy, phase L3 (manual 0x548C, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21644 # 0x548C
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: REGISTER, phase_ref: L3 }
+          - point_id: reactive_energy_export_l1
+            name: Reactive Energy Export L1
+            description: Cumulative reactive export energy, phase L1 (manual 0x5490, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21648 # 0x5490
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: REGISTER, phase_ref: L1 }
+          - point_id: reactive_energy_export_l2
+            name: Reactive Energy Export L2
+            description: Cumulative reactive export energy, phase L2 (manual 0x5494, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21652 # 0x5494
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: REGISTER, phase_ref: L2 }
+          - point_id: reactive_energy_export_l3
+            name: Reactive Energy Export L3
+            description: Cumulative reactive export energy, phase L3 (manual 0x5498, U64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21656 # 0x5498
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: REGISTER, phase_ref: L3 }
+          - point_id: reactive_energy_net_l1
+            name: Reactive Energy Net L1
+            description: Cumulative reactive net energy, phase L1 (manual 0x549C, S64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21660 # 0x549C
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: NET, accumulation: REGISTER, phase_ref: L1 }
+          - point_id: reactive_energy_net_l2
+            name: Reactive Energy Net L2
+            description: Cumulative reactive net energy, phase L2 (manual 0x54A0, S64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21664 # 0x54A0
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: NET, accumulation: REGISTER, phase_ref: L2 }
+          - point_id: reactive_energy_net_l3
+            name: Reactive Energy Net L3
+            description: Cumulative reactive net energy, phase L3 (manual 0x54A4, S64, 0.01 kvarh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21668 # 0x54A4
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: NET, accumulation: REGISTER, phase_ref: L3 }
+          - point_id: apparent_energy_import_l1
+            name: Apparent Energy Import L1
+            description: Cumulative apparent import energy, phase L1 (manual 0x54A8, U64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21672 # 0x54A8
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: IMPORT, accumulation: REGISTER, phase_ref: L1 }
+          - point_id: apparent_energy_import_l2
+            name: Apparent Energy Import L2
+            description: Cumulative apparent import energy, phase L2 (manual 0x54AC, U64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21676 # 0x54AC
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: IMPORT, accumulation: REGISTER, phase_ref: L2 }
+          - point_id: apparent_energy_import_l3
+            name: Apparent Energy Import L3
+            description: Cumulative apparent import energy, phase L3 (manual 0x54B0, U64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21680 # 0x54B0
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: IMPORT, accumulation: REGISTER, phase_ref: L3 }
+          - point_id: apparent_energy_export_l1
+            name: Apparent Energy Export L1
+            description: Cumulative apparent export energy, phase L1 (manual 0x54B4, U64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21684 # 0x54B4
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: EXPORT, accumulation: REGISTER, phase_ref: L1 }
+          - point_id: apparent_energy_export_l2
+            name: Apparent Energy Export L2
+            description: Cumulative apparent export energy, phase L2 (manual 0x54B8, U64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21688 # 0x54B8
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: EXPORT, accumulation: REGISTER, phase_ref: L2 }
+          - point_id: apparent_energy_export_l3
+            name: Apparent Energy Export L3
+            description: Cumulative apparent export energy, phase L3 (manual 0x54BC, U64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21692 # 0x54BC
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: EXPORT, accumulation: REGISTER, phase_ref: L3 }
+          - point_id: apparent_energy_net_l1
+            name: Apparent Energy Net L1
+            description: Cumulative apparent net energy, phase L1 (manual 0x54C0, S64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21696 # 0x54C0
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: NET, accumulation: REGISTER, phase_ref: L1 }
+          - point_id: apparent_energy_net_l2
+            name: Apparent Energy Net L2
+            description: Cumulative apparent net energy, phase L2 (manual 0x54C4, S64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21700 # 0x54C4
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: NET, accumulation: REGISTER, phase_ref: L2 }
+          - point_id: apparent_energy_net_l3
+            name: Apparent Energy Net L3
+            description: Cumulative apparent net energy, phase L3 (manual 0x54C8, S64, 0.01 kVAh).
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            unit: kVAh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21704 # 0x54C8
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_apparent, direction: NET, accumulation: REGISTER, phase_ref: L3 }
+
+      # --- Resettable energy accumulators (manual §9.3, 0x552C+) ---
+      - block_id: resettable_energy
+        name: Resettable Energy Accumulators
+        space: HOLDING_REGISTER
+        start_offset: 21804 # 0x552C
+        length_words: 16
+        points:
+          - point_id: resettable_active_import
+            name: Resettable Active Energy Import
+            description: Resettable Active Energy Import, resettable via the 0x8F1B-0x8F1E operations (manual 0x552C, U64, res. 0.01).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21804 # 0x552C
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: INTERVAL }
+          - point_id: resettable_active_export
+            name: Resettable Active Energy Export
+            description: Resettable Active Energy Export, resettable via the 0x8F1B-0x8F1E operations (manual 0x5530, U64, res. 0.01).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kWh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21808 # 0x5530
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: INTERVAL }
+          - point_id: resettable_reactive_import
+            name: Resettable Reactive Energy Import
+            description: Resettable Reactive Energy Import, resettable via the 0x8F1B-0x8F1E operations (manual 0x5534, U64, res. 0.01).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21812 # 0x5534
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: INTERVAL }
+          - point_id: resettable_reactive_export
+            name: Resettable Reactive Energy Export
+            description: Resettable Reactive Energy Export, resettable via the 0x8F1B-0x8F1E operations (manual 0x5538, U64, res. 0.01).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            unit: kvarh
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 21816 # 0x5538
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: INTERVAL }
+
       # --- Instantaneous values (manual §9.3, 0x5B00+) --------------------
       - block_id: instantaneous
         name: Instantaneous Values
         space: HOLDING_REGISTER
         start_offset: 23296 # 0x5B00
-        length_words: 64
+        length_words: 66
         points:
           - point_id: voltage_l1_n
             name: Voltage L1-N
@@ -222,6 +1074,436 @@ devices:
             value_type: { enum_ref: { type_id: current_quadrant } }
             mapping: { space: HOLDING_REGISTER, offset: 23358 } # 0x5B3E
 
+          - point_id: voltage_l2_n
+            name: Voltage L2-N
+            description: RMS line-to-neutral voltage, phase L2 (manual 0x5B02, U16, 0.1 V).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: V
+            mapping: { space: HOLDING_REGISTER, offset: 23298 } # 0x5B02
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+          - point_id: voltage_l3_n
+            name: Voltage L3-N
+            description: RMS line-to-neutral voltage, phase L3 (manual 0x5B04, U16, 0.1 V).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: V
+            mapping: { space: HOLDING_REGISTER, offset: 23300 } # 0x5B04
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+          - point_id: voltage_l3_l2
+            name: Voltage L3-L2
+            description: RMS line-to-line voltage between L3 and L2 (manual 0x5B08, U16, 0.1 V).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: V
+            mapping: { space: HOLDING_REGISTER, offset: 23304 } # 0x5B08
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: voltage, phase_ref: L2_L3 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+          - point_id: voltage_l1_l3
+            name: Voltage L1-L3
+            description: RMS line-to-line voltage between L1 and L3 (manual 0x5B0A, U16, 0.1 V).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: V
+            mapping: { space: HOLDING_REGISTER, offset: 23306 } # 0x5B0A
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            measurand: { base_quantity: voltage, phase_ref: L3_L1 }
+            na_values: [{ raw: 65535, meaning: not_implemented }]
+          - point_id: current_l2
+            name: Current L2
+            description: RMS current, phase L2 (manual 0x5B0E, U16, 0.01 A).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: A
+            mapping: { space: HOLDING_REGISTER, offset: 23310 } # 0x5B0E
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: current, phase_ref: L2 }
+          - point_id: current_l3
+            name: Current L3
+            description: RMS current, phase L3 (manual 0x5B10, U16, 0.01 A).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            unit: A
+            mapping: { space: HOLDING_REGISTER, offset: 23312 } # 0x5B10
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: current, phase_ref: L3 }
+          - point_id: active_power_l2
+            name: Active Power L2
+            description: Instantaneous active power, phase L2, signed (manual 0x5B18, S32, 0.01 W).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: W
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23320 # 0x5B18
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+          - point_id: active_power_l3
+            name: Active Power L3
+            description: Instantaneous active power, phase L3, signed (manual 0x5B1A, S32, 0.01 W).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: W
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23322 # 0x5B1A
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+          - point_id: reactive_power_total
+            name: Reactive Power Total
+            description: Total instantaneous reactive power, signed (manual 0x5B1C, S32, 0.01 var).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: var
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23324 # 0x5B1C
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL }
+            na_values: [{ raw: 2147483647, meaning: not_implemented }]
+          - point_id: reactive_power_l1
+            name: Reactive Power L1
+            description: Instantaneous reactive power, phase L1, signed (manual 0x5B1E, S32, 0.01 var).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: var
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23326 # 0x5B1E
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: reactive_power, phase_ref: L1 }
+          - point_id: reactive_power_l2
+            name: Reactive Power L2
+            description: Instantaneous reactive power, phase L2, signed (manual 0x5B20, S32, 0.01 var).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: var
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23328 # 0x5B20
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: reactive_power, phase_ref: L2 }
+          - point_id: reactive_power_l3
+            name: Reactive Power L3
+            description: Instantaneous reactive power, phase L3, signed (manual 0x5B22, S32, 0.01 var).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: var
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23330 # 0x5B22
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: reactive_power, phase_ref: L3 }
+          - point_id: apparent_power_total
+            name: Apparent Power Total
+            description: Total instantaneous apparent power, signed (manual 0x5B24, S32, 0.01 VA).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: VA
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23332 # 0x5B24
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL }
+            na_values: [{ raw: 2147483647, meaning: not_implemented }]
+          - point_id: apparent_power_l1
+            name: Apparent Power L1
+            description: Instantaneous apparent power, phase L1, signed (manual 0x5B26, S32, 0.01 VA).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: VA
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23334 # 0x5B26
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: apparent_power, phase_ref: L1 }
+          - point_id: apparent_power_l2
+            name: Apparent Power L2
+            description: Instantaneous apparent power, phase L2, signed (manual 0x5B28, S32, 0.01 VA).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: VA
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23336 # 0x5B28
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: apparent_power, phase_ref: L2 }
+          - point_id: apparent_power_l3
+            name: Apparent Power L3
+            description: Instantaneous apparent power, phase L3, signed (manual 0x5B2A, S32, 0.01 VA).
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            unit: VA
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 23338 # 0x5B2A
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            measurand: { base_quantity: apparent_power, phase_ref: L3 }
+          - point_id: phase_angle_power_total
+            name: Phase Angle Power Total
+            description: Phase Angle Power Total in degrees, -180 to +180 (manual 0x5B2D, S16, 0.1 deg).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 23341 } # 0x5B2D
+            transform: { scale: { numerator: 1, denominator: 10 } }
+          - point_id: phase_angle_power_l1
+            name: Phase Angle Power L1
+            description: Phase Angle Power L1 in degrees, -180 to +180 (manual 0x5B2E, S16, 0.1 deg).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 23342 } # 0x5B2E
+            transform: { scale: { numerator: 1, denominator: 10 } }
+          - point_id: phase_angle_power_l2
+            name: Phase Angle Power L2
+            description: Phase Angle Power L2 in degrees, -180 to +180 (manual 0x5B2F, S16, 0.1 deg).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 23343 } # 0x5B2F
+            transform: { scale: { numerator: 1, denominator: 10 } }
+          - point_id: phase_angle_power_l3
+            name: Phase Angle Power L3
+            description: Phase Angle Power L3 in degrees, -180 to +180 (manual 0x5B30, S16, 0.1 deg).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 23344 } # 0x5B30
+            transform: { scale: { numerator: 1, denominator: 10 } }
+          - point_id: phase_angle_voltage_l1
+            name: Phase Angle Voltage L1
+            description: Phase Angle Voltage L1 in degrees, -180 to +180 (manual 0x5B31, S16, 0.1 deg).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 23345 } # 0x5B31
+            transform: { scale: { numerator: 1, denominator: 10 } }
+          - point_id: phase_angle_voltage_l2
+            name: Phase Angle Voltage L2
+            description: Phase Angle Voltage L2 in degrees, -180 to +180 (manual 0x5B32, S16, 0.1 deg).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 23346 } # 0x5B32
+            transform: { scale: { numerator: 1, denominator: 10 } }
+          - point_id: phase_angle_voltage_l3
+            name: Phase Angle Voltage L3
+            description: Phase Angle Voltage L3 in degrees, -180 to +180 (manual 0x5B33, S16, 0.1 deg).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 23347 } # 0x5B33
+            transform: { scale: { numerator: 1, denominator: 10 } }
+          - point_id: phase_angle_current_l1
+            name: Phase Angle Current L1
+            description: Phase Angle Current L1 in degrees, -180 to +180 (manual 0x5B37, S16, 0.1 deg).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 23351 } # 0x5B37
+            transform: { scale: { numerator: 1, denominator: 10 } }
+          - point_id: phase_angle_current_l2
+            name: Phase Angle Current L2
+            description: Phase Angle Current L2 in degrees, -180 to +180 (manual 0x5B38, S16, 0.1 deg).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 23352 } # 0x5B38
+            transform: { scale: { numerator: 1, denominator: 10 } }
+          - point_id: phase_angle_current_l3
+            name: Phase Angle Current L3
+            description: Phase Angle Current L3 in degrees, -180 to +180 (manual 0x5B39, S16, 0.1 deg).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 23353 } # 0x5B39
+            transform: { scale: { numerator: 1, denominator: 10 } }
+          - point_id: power_factor_l1
+            name: Power Factor L1
+            description: Power factor, phase L1, signed -1.000 to +1.000 (manual 0x5B3B, S16, 0.001).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            unit: "1"
+            mapping: { space: HOLDING_REGISTER, offset: 23355 } # 0x5B3B
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            measurand: { base_quantity: power_factor, phase_ref: L1 }
+          - point_id: power_factor_l2
+            name: Power Factor L2
+            description: Power factor, phase L2, signed -1.000 to +1.000 (manual 0x5B3C, S16, 0.001).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            unit: "1"
+            mapping: { space: HOLDING_REGISTER, offset: 23356 } # 0x5B3C
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            measurand: { base_quantity: power_factor, phase_ref: L2 }
+          - point_id: power_factor_l3
+            name: Power Factor L3
+            description: Power factor, phase L3, signed -1.000 to +1.000 (manual 0x5B3D, S16, 0.001).
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            unit: "1"
+            mapping: { space: HOLDING_REGISTER, offset: 23357 } # 0x5B3D
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            measurand: { base_quantity: power_factor, phase_ref: L3 }
+          - point_id: current_quadrant_l1
+            name: Current Quadrant L1
+            description: Electrical quadrant of the phase L1 current vector, 1-4 (manual 0x5B3F, U16).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: current_quadrant } }
+            mapping: { space: HOLDING_REGISTER, offset: 23359 } # 0x5B3F
+          - point_id: current_quadrant_l2
+            name: Current Quadrant L2
+            description: Electrical quadrant of the phase L2 current vector, 1-4 (manual 0x5B40, U16).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: current_quadrant } }
+            mapping: { space: HOLDING_REGISTER, offset: 23360 } # 0x5B40
+          - point_id: current_quadrant_l3
+            name: Current Quadrant L3
+            description: Electrical quadrant of the phase L3 current vector, 1-4 (manual 0x5B41, U16).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: current_quadrant } }
+            mapping: { space: HOLDING_REGISTER, offset: 23361 } # 0x5B41
+
+      # --- Inputs and outputs (manual §9.5.2, 0x6300+) ---
+      - block_id: io
+        name: Inputs and Outputs
+        space: HOLDING_REGISTER
+        start_offset: 25344 # 0x6300
+        length_words: 32
+        points:
+          - point_id: output_1
+            name: Output 1
+            description: Output 1, ON=1 OFF=0 (manual 0x6300, U16).
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 25344 } # 0x6300
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+          - point_id: output_2
+            name: Output 2
+            description: Output 2, ON=1 OFF=0 (manual 0x6301, U16).
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 25345 } # 0x6301
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+          - point_id: input_3_state
+            name: Input 3 Current State
+            description: Input 3 Current State, ON=1 OFF=0 (manual 0x6308, U16).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 25352 } # 0x6308
+          - point_id: input_4_state
+            name: Input 4 Current State
+            description: Input 4 Current State, ON=1 OFF=0 (manual 0x6309, U16).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 25353 } # 0x6309
+          - point_id: input_3_stored_state
+            name: Input 3 Stored State
+            description: Input 3 Stored State, ON=1 OFF=0 (manual 0x6310, U16).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 25360 } # 0x6310
+          - point_id: input_4_stored_state
+            name: Input 4 Stored State
+            description: Input 4 Stored State, ON=1 OFF=0 (manual 0x6311, U16).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 25361 } # 0x6311
+          - point_id: input_3_counter
+            name: Input 3 Counter
+            description: Pulse counter for input 3 (manual 0x6318, U64).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: UINT64 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 25368 # 0x6318
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+          - point_id: input_4_counter
+            name: Input 4 Counter
+            description: Pulse counter for input 4 (manual 0x631C, U64).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: UINT64 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 25372 # 0x631C
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
       # --- Production data and identification (manual §9.3, 0x8900+) ------
       - block_id: identification
         name: Production Data and Identification
@@ -269,11 +1551,30 @@ devices:
               string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED }
 
       # --- Real-time clock, tariff and status flags (manual §9.3, 0x8A00+) -
+          - point_id: modbus_mapping_version
+            name: Modbus Mapping Version
+            description: Modbus mapping version; high byte = major (1-255), low byte = minor (0-255) (manual 0x8910, U16).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 35088 } # 0x8910
+            fields:
+              - field_id: major
+                name: Major
+                bit_offset: 8
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: minor
+                name: Minor
+                bit_offset: 0
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+
       - block_id: clock_status
         name: Clock, Tariff and Status Flags
         space: HOLDING_REGISTER
         start_offset: 35328 # 0x8A00
-        length_words: 42
+        length_words: 48
         points:
           - point_id: rtc_datetime
             name: Real-Time Clock Date/Time
@@ -344,3 +1645,360 @@ devices:
               byte_order: BIG_ENDIAN
               word_order: WORD_BIG_ENDIAN
             measurand: { base_quantity: alarm_status }
+          - point_id: information_flags
+            name: Information Flags
+            description: 64-bit information flag string (manual 0x8A19, 4 words).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: UINT64 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 35353 # 0x8A19
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            measurand: { base_quantity: device_status }
+          - point_id: warning_flags
+            name: Warning Flags
+            description: 64-bit warning flag string (manual 0x8A1F, 4 words).
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: UINT64 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 35359 # 0x8A1F
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            measurand: { base_quantity: warning_code }
+          - point_id: power_fail_counter
+            name: Power Fail Counter
+            description: Number of power failures (manual 0x8A2F, U16).
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 35375 } # 0x8A2F
+
+      # --- Settings (manual §9.3 Settings, 0x8C04+) ---
+      - block_id: settings
+        name: Meter Settings
+        space: HOLDING_REGISTER
+        start_offset: 35844 # 0x8C04
+        length_words: 226
+        points:
+          - point_id: ct_ratio_numerator
+            name: CT Ratio Numerator
+            description: Current transformer ratio numerator (manual 0x8C04, U32, R/W).
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 35844 # 0x8C04
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            write:
+              behavior: DIRECT
+          - point_id: ct_ratio_denominator
+            name: CT Ratio Denominator
+            description: Current transformer ratio denominator (manual 0x8C08, U32, R/W).
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 35848 # 0x8C08
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            write:
+              behavior: DIRECT
+          - point_id: currency_conversion_factor
+            name: Currency Conversion Factor
+            description: Currency per kWh, resolution 0.01 (manual 0x8CE2, U32, R/W).
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 36066 # 0x8CE2
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            write:
+              behavior: DIRECT
+          - point_id: led_source
+            name: LED Source
+            description: Quantity driving the metrology LED - 0 active energy, 1 reactive energy (manual 0x8CE4, U16, R/W).
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36068 } # 0x8CE4
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+          - point_id: element_count
+            name: Number of Elements
+            description: Number of measuring elements, 1-3 (manual 0x8CE5, U16, R/W).
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36069 } # 0x8CE5
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 1, denominator: 1 }
+                max_value: { numerator: 3, denominator: 1 }
+
+      # --- Operations - write 1 to trigger (manual §9.3 Operations, 0x8F00+) ---
+      - block_id: operations
+        name: Reset Operations
+        space: HOLDING_REGISTER
+        start_offset: 36608 # 0x8F00
+        length_words: 53
+        points:
+          - point_id: reset_power_fail_counter
+            name: Reset Power Fail Counter
+            description: Write 1 to perform the reset (manual 0x8F00, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36608 } # 0x8F00
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_power_outage_time
+            name: Reset Power Outage Time
+            description: Write 1 to perform the reset (manual 0x8F05, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36613 } # 0x8F05
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_input_3_counter
+            name: Reset Input 3 Counter
+            description: Write 1 to perform the reset (manual 0x8F0B, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36619 } # 0x8F0B
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_input_4_counter
+            name: Reset Input 4 Counter
+            description: Write 1 to perform the reset (manual 0x8F0C, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36620 } # 0x8F0C
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_input_3_stored_state
+            name: Reset Input 3 Stored State
+            description: Write 1 to perform the reset (manual 0x8F13, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36627 } # 0x8F13
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_input_4_stored_state
+            name: Reset Input 4 Stored State
+            description: Write 1 to perform the reset (manual 0x8F14, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36628 } # 0x8F14
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_resettable_active_import
+            name: Reset Resettable Active Energy Import
+            description: Write 1 to perform the reset (manual 0x8F1B, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36635 } # 0x8F1B
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_resettable_active_export
+            name: Reset Resettable Active Energy Export
+            description: Write 1 to perform the reset (manual 0x8F1C, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36636 } # 0x8F1C
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_resettable_reactive_import
+            name: Reset Resettable Reactive Energy Import
+            description: Write 1 to perform the reset (manual 0x8F1D, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36637 } # 0x8F1D
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_resettable_reactive_export
+            name: Reset Resettable Reactive Energy Export
+            description: Write 1 to perform the reset (manual 0x8F1E, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36638 } # 0x8F1E
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_load_profile_ch1
+            name: Reset Load Profile Channel 1
+            description: Write 1 to perform the reset (manual 0x8F21, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36641 } # 0x8F21
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_load_profile_ch2
+            name: Reset Load Profile Channel 2
+            description: Write 1 to perform the reset (manual 0x8F22, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36642 } # 0x8F22
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_load_profile_ch3
+            name: Reset Load Profile Channel 3
+            description: Write 1 to perform the reset (manual 0x8F23, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36643 } # 0x8F23
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_load_profile_ch4
+            name: Reset Load Profile Channel 4
+            description: Write 1 to perform the reset (manual 0x8F24, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36644 } # 0x8F24
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_load_profile_ch5
+            name: Reset Load Profile Channel 5
+            description: Write 1 to perform the reset (manual 0x8F25, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36645 } # 0x8F25
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_load_profile_ch6
+            name: Reset Load Profile Channel 6
+            description: Write 1 to perform the reset (manual 0x8F26, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36646 } # 0x8F26
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_load_profile_ch7
+            name: Reset Load Profile Channel 7
+            description: Write 1 to perform the reset (manual 0x8F27, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36647 } # 0x8F27
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_load_profile_ch8
+            name: Reset Load Profile Channel 8
+            description: Write 1 to perform the reset (manual 0x8F28, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36648 } # 0x8F28
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_system_log
+            name: Reset System Log
+            description: Write 1 to perform the reset (manual 0x8F31, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36657 } # 0x8F31
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_event_log
+            name: Reset Event Log
+            description: Write 1 to perform the reset (manual 0x8F32, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36658 } # 0x8F32
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_net_quality_log
+            name: Reset Net Quality Log
+            description: Write 1 to perform the reset (manual 0x8F33, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36659 } # 0x8F33
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]
+          - point_id: reset_communication_log
+            name: Reset Communication Log
+            description: Write 1 to perform the reset (manual 0x8F34, write-only).
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36660 } # 0x8F34
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [1]

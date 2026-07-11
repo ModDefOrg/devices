@@ -20,7 +20,7 @@
 
 doc_id: abb.terra-ac
 name: ABB Terra AC Wallbox
-version: 1.0.0
+version: 1.1.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
@@ -57,13 +57,91 @@ devices:
       - MODBUS_RTU
       - MODBUS_TCP
     blocks:
-      # --- Read-only telemetry / status block: 4006h..4024h (16390..16420) ---
+      # --- Read-only telemetry / status block: 4000h..4024h (16384..16421) ---
       - block_id: telemetry
         name: Telemetry and Status
         space: HOLDING_REGISTER
-        start_offset: 16390
-        length_words: 31
+        start_offset: 16384
+        length_words: 38
         points:
+          - point_id: serial_number
+            name: Serial Number
+            description: >-
+              Encoded product serial number (4000h, 4 words). Byte 7 connector type
+              (0x47 G cable T2, 0x50 P cable T1, 0x53 S socket+shutter, 0x54 T socket),
+              byte 6 rated power (0x07/0x11/0x22 kW), byte 5 plant ID, byte 3
+              production week, byte 2 production year, bytes 1-0 unique serial.
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: UINT64 }
+            fields:
+              - field_id: connector_type
+                name: Connector Type
+                bit_offset: 56
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: rated_power
+                name: Rated Power
+                bit_offset: 48
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: plant_id
+                name: Plant ID
+                bit_offset: 40
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: production_week
+                name: Production Week
+                bit_offset: 24
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: production_year
+                name: Production Year
+                bit_offset: 16
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: unique_serial
+                name: Unique Serial Number
+                bit_offset: 0
+                bit_length: 16
+                value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16384
+              length_words: 4
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+
+          - point_id: firmware_version
+            name: Firmware Version
+            description: >-
+              Firmware version (4004h, 2 words); bytes major.minor.patch, last byte
+              reserved. Example 0x01 0x02 0x13 0x00 = v1.2.13.
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            fields:
+              - field_id: major
+                name: Major
+                bit_offset: 24
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: minor
+                name: Minor
+                bit_offset: 16
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: patch
+                name: Patch
+                bit_offset: 8
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16388
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
           - point_id: user_settable_max_current
             name: User Settable Max Current
             description: Hardware/config maximum current settable in the Terra Config app (4006h).
@@ -221,6 +299,44 @@ devices:
               base_quantity: voltage
               phase_ref: L1_N
 
+          - point_id: voltage_l2
+            name: Voltage L2
+            description: Measured phase 2 voltage, L-N or L-L per grid network type config (4018h).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16408
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L2
+
+          - point_id: voltage_l3
+            name: Voltage L3
+            description: Measured phase 3 voltage, L-N or L-L per grid network type config (401Ah).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16410
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 10 }
+            unit: V
+            measurand:
+              base_quantity: voltage
+              phase_ref: L3
+
           - point_id: active_power
             name: Active Power
             description: Instantaneous active power delivered to the vehicle (401Ch).
@@ -268,6 +384,24 @@ devices:
               length_words: 1
             unit: s
 
+          - point_id: modbus_current_limit_readback
+            name: Modbus Charging Current Limit (readback)
+            description: Readback of the charging current limit set via Modbus register 4100h (4022h).
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16418
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            transform:
+              scale: { numerator: 1, denominator: 1000 }
+            unit: A
+            measurand:
+              base_quantity: current
+
           - point_id: fallback_limit_readback
             name: Fallback Limit (readback)
             description: Read-back of the fallback current limit applied after comms timeout (4024h).
@@ -314,6 +448,24 @@ devices:
                 min_value: { numerator: 0, denominator: 1 }
                 max_value: { numerator: 32, denominator: 1 }
                 step: { numerator: 1, denominator: 1000 }
+
+          - point_id: lock_unlock_socket
+            name: Lock/Unlock Socket Cable
+            description: >-
+              Lock (1) or unlock (0) the socket cable (4103h); socket versions only.
+              Unlocking during an ongoing charging session is not advised.
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16643
+              length_words: 1
+            write:
+              behavior: COMMAND_TRIGGER
+              constraints:
+                allowed_values: [0, 1]
+                safety_note: Ensure no ongoing charging session before unlocking.
 
           - point_id: start_stop_charging
             name: Start/Stop Charging Session
@@ -375,3 +527,126 @@ devices:
                 min_value: { numerator: 0, denominator: 1 }
                 max_value: { numerator: 32, denominator: 1 }
                 step: { numerator: 1, denominator: 1 }
+
+      # --- Firmware upgrade via Modbus: 410Ah..4118h (16650..16664). ---
+      # Multi-step write-only protocol (doc §5.20): write the request registers,
+      # then stream the package via 4113h-4118h. The variable-length package
+      # data register 4118h is omitted (its length depends on the chunk size);
+      # upgrade success is verified by re-reading the firmware version (4004h).
+      - block_id: firmware_upgrade
+        name: Firmware Upgrade
+        space: HOLDING_REGISTER
+        start_offset: 16650
+        length_words: 15
+        points:
+          - point_id: fw_version_info
+            name: FW Upgrade Version Info
+            description: Version info of the upgrade package (410Ah, 4 bytes, write-only).
+            access: WRITE_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16650
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            write:
+              behavior: DIRECT
+
+          - point_id: fw_package_length
+            name: FW Upgrade Package Length
+            description: Total length of the upgrade package in bytes (410Ch, UINT32, write-only).
+            access: WRITE_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16652
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            write:
+              behavior: DIRECT
+
+          - point_id: fw_package_crc
+            name: FW Upgrade Package CRC
+            description: CRC of the whole upgrade package, provided by ABB (410Eh, UINT32, write-only).
+            access: WRITE_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16654
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            write:
+              behavior: DIRECT
+
+          - point_id: fw_chunk_size
+            name: FW Upgrade Chunk Size
+            description: Package size transferred each time (4110h, UINT16, write-only).
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16656, length_words: 1 }
+            write:
+              behavior: DIRECT
+
+          - point_id: fw_update_mode
+            name: FW Upgrade Update Mode
+            description: Update mode, fixed value 3 (4111h, UINT16, write-only).
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16657, length_words: 1 }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [3]
+
+          - point_id: fw_split_package_count
+            name: FW Upgrade Split Package Count
+            description: Total quantity of split packages (4113h, UINT16, write-only).
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16659, length_words: 1 }
+            write:
+              behavior: DIRECT
+
+          - point_id: fw_package_sequence
+            name: FW Upgrade Package Sequence
+            description: Sequence number of the package being sent, starting at 1 (4114h, write-only).
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16660, length_words: 1 }
+            write:
+              behavior: DIRECT
+
+          - point_id: fw_package_bytes
+            name: FW Upgrade Package Bytes
+            description: Real bytes sent this transfer; the last package is normally smaller (4115h, write-only).
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16661, length_words: 1 }
+            write:
+              behavior: DIRECT
+
+          - point_id: fw_data_checksum
+            name: FW Upgrade Data Checksum
+            description: Checksum of the package data written to 4118h (4116h, UINT32, write-only).
+            access: WRITE_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 16662
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+            write:
+              behavior: DIRECT

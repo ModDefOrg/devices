@@ -20,10 +20,16 @@
 #   temp16 = signed 16-bit, value / 100 -> degC  (range -327.68 .. 327.67)
 #   int16  = signed 16-bit, no scaling
 #   text16 = unsigned 16-bit, 2 ASCII chars (MSB, LSB)
+#
+# Coverage: all normal-mode holding and input registers of the DCOM-LT/MB.
+# The "Sequencer Mode" tables (and the DCOM-LT/IO sequencer registers) remap
+# the same offsets with different meanings depending on the configured
+# operating mode; that mode-dependent overlay is out of scope for this
+# profile, which describes normal (non-sequencer) operation.
 
 doc_id: daikin.altherma-3
 name: Daikin Altherma 3 (DCOM-LT/MB Modbus gateway)
-version: 1.0.0
+version: 2.0.0
 
 imports:
   # Bare (unaliased) import: inline measurand base_quantity qualifiers on points
@@ -42,6 +48,24 @@ enums:
         value: 1
       - name: COOLING
         value: 2
+  - type_id: weather_dependent_mode
+    name: Weather Dependent Mode
+    values:
+      - name: FIXED
+        value: 0
+      - name: WEATHER_DEPENDENT
+        value: 1
+      - name: FIXED_SCHEDULED
+        value: 2
+      - name: WEATHER_DEPENDENT_SCHEDULED
+        value: 3
+  - type_id: three_way_valve_position
+    name: Three-Way Valve Position
+    values:
+      - name: SPACE_HEATING
+        value: 0
+      - name: DHW
+        value: 1
   - type_id: unit_error
     name: Unit Error
     values:
@@ -64,7 +88,7 @@ devices:
         name: Holding Registers (setpoints & modes)
         space: HOLDING_REGISTER
         start_offset: 1
-        length_words: 13
+        length_words: 55
         points:
           - point_id: lwt_heating_setpoint
             name: Leaving Water Main Heating Setpoint
@@ -236,6 +260,141 @@ devices:
                   - 0
                   - 1
 
+          - point_id: room_thermostat_cooling_setpoint
+            name: Room Thermostat Control Cooling Setpoint
+            description: Room thermostat control cooling setpoint (writable, 15..35 degC)
+            access: READ_WRITE
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 7
+              length_words: 1
+            unit: degC
+            measurand:
+              base_quantity: temperature
+              location: INTERNAL
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value:
+                  numerator: 15
+                  denominator: 1
+                max_value:
+                  numerator: 35
+                  denominator: 1
+                step:
+                  numerator: 1
+                  denominator: 1
+
+          - point_id: quiet_mode
+            name: Quiet Mode Operation
+            description: Quiet mode operation enable (0 Off, 1 On)
+            access: READ_WRITE
+            storage_type: S16
+            value_type:
+              primitive: BOOL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 9
+              length_words: 1
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values:
+                  - 0
+                  - 1
+
+          - point_id: dhw_booster_mode
+            name: DHW Booster Mode On/Off
+            description: Domestic hot water booster mode enable (0 Off, 1 On)
+            access: READ_WRITE
+            storage_type: S16
+            value_type:
+              primitive: BOOL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 13
+              length_words: 1
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values:
+                  - 0
+                  - 1
+
+          - point_id: weather_dependent_mode
+            name: Weather Dependent Mode
+            description: Leaving-water setpoint mode (fixed / weather dependent, with optional scheduling)
+            access: READ_WRITE
+            storage_type: S16
+            value_type:
+              enum_ref:
+                type_id: weather_dependent_mode
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 53
+              length_words: 1
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values:
+                  - 0
+                  - 1
+                  - 2
+                  - 3
+
+          - point_id: wd_lwt_heating_offset
+            name: Weather Dependent Mode LWT Heating Setpoint Offset
+            description: Offset applied to the weather-dependent leaving water heating setpoint (-10..10 degC)
+            access: READ_WRITE
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 54
+              length_words: 1
+            unit: degC
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value:
+                  numerator: -10
+                  denominator: 1
+                max_value:
+                  numerator: 10
+                  denominator: 1
+                step:
+                  numerator: 1
+                  denominator: 1
+
+          - point_id: wd_lwt_cooling_offset
+            name: Weather Dependent Mode LWT Cooling Setpoint Offset
+            description: Offset applied to the weather-dependent leaving water cooling setpoint (-10..10 degC)
+            access: READ_WRITE
+            storage_type: S16
+            value_type:
+              primitive: DECIMAL
+            mapping:
+              space: HOLDING_REGISTER
+              offset: 55
+              length_words: 1
+            unit: degC
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value:
+                  numerator: -10
+                  denominator: 1
+                max_value:
+                  numerator: 10
+                  denominator: 1
+                step:
+                  numerator: 1
+                  denominator: 1
+
       # ----- Input registers: live sensor & status data (read-only) -----
       - block_id: input
         name: Input Registers (sensors & status)
@@ -258,27 +417,123 @@ devices:
             measurand:
               base_quantity: alarm_status
 
-          - point_id: unit_status_flags
-            name: Unit Status Flags
-            description: Bit flags summarising key on/off run states reported by the unit
+          - point_id: unit_error_code
+            name: Unit Error Code
+            description: Daikin fault code as two ASCII characters, '--' (11565) when no error (text16)
             access: READ_ONLY
-            storage_type: U16
+            storage_type: STRING_ASCII
             value_type:
-              flags:
-                bits:
-                  "0": circulation_pump_running
-                  "1": compressor_running
-                  "2": booster_heater_running
-                  "3": disinfection_operation
-                  "4": defrost_startup
+              primitive: STRING
             mapping:
-              # Overlay over the discrete int16 run-state input registers (30..35);
-              # synthetic flags view, hence overlay:true on this block is not needed
-              # because it does not overlap other points in THIS block. Mapped to the
-              # circulation-pump register as the anchor word.
+              space: INPUT_REGISTER
+              offset: 22
+              length_words: 1
+              string_encoding: { charset: ASCII, padding: PADDING_SPACE, termination: FIXED_LENGTH }
+            measurand:
+              base_quantity: fault_code
+
+          - point_id: unit_error_sub_code
+            name: Unit Error Sub Code
+            description: Fault sub code 0..99; 32766 when no error
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: INT32
+            mapping:
+              space: INPUT_REGISTER
+              offset: 23
+              length_words: 1
+            na_values:
+              - { raw: 32766, meaning: no_error }
+            measurand:
+              base_quantity: fault_code
+
+          - point_id: circulation_pump_running
+            name: Circulation Pump Running
+            description: Circulation pump run state (0 Off, 1 On)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: BOOL
+            mapping:
               space: INPUT_REGISTER
               offset: 30
               length_words: 1
+
+          - point_id: compressor_running
+            name: Compressor Run
+            description: Compressor run state (0 Off, 1 On)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: BOOL
+            mapping:
+              space: INPUT_REGISTER
+              offset: 31
+              length_words: 1
+
+          - point_id: booster_heater_running
+            name: Booster Heater Run
+            description: Booster heater run state (0 Off, 1 On)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: BOOL
+            mapping:
+              space: INPUT_REGISTER
+              offset: 32
+              length_words: 1
+
+          - point_id: disinfection_operation
+            name: Disinfection Operation
+            description: Disinfection (anti-legionella) operation state (0 Off, 1 On)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: BOOL
+            mapping:
+              space: INPUT_REGISTER
+              offset: 33
+              length_words: 1
+
+          - point_id: defrost_startup
+            name: Defrost/Startup
+            description: Defrost or startup operation state (0 Off, 1 On)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: BOOL
+            mapping:
+              space: INPUT_REGISTER
+              offset: 35
+              length_words: 1
+
+          - point_id: hot_start
+            name: Hot Start
+            description: Hot start operation state (0 Off, 1 On)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              primitive: BOOL
+            mapping:
+              space: INPUT_REGISTER
+              offset: 36
+              length_words: 1
+
+          - point_id: three_way_valve
+            name: 3-Way Valve
+            description: 3-way valve position (0 space heating, 1 DHW)
+            access: READ_ONLY
+            storage_type: S16
+            value_type:
+              enum_ref:
+                type_id: three_way_valve_position
+            mapping:
+              space: INPUT_REGISTER
+              offset: 37
+              length_words: 1
+            measurand:
+              base_quantity: device_status
 
           - point_id: operation_mode_actual
             name: Operation Mode (actual)
