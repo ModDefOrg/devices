@@ -6,6 +6,10 @@
 # Register map confirmed against the vendor document above; not yet hardware-verified.
 # Part of the ModDef blessed device registry.
 #
+# The same map is published as the EM500 communication protocol, which the EM530
+# and EM540 product pages link to:
+# https://www.gavazziautomation.com/fileadmin/images/PIM/OTHERSTUFF/COMPRO/EM500_CPP.pdf
+#
 # Encoding notes (from the vendor protocol document):
 #   - Measured variables live in the read-only register space, read with Modbus
 #     function code 03 or 04 (used interchangeably per the doc). Physical (word)

@@ -208,11 +208,11 @@ devices:
   profile: energy-meter/carlo-gavazzi-em340/carlo-gavazzi-em340.moddef.yaml
   transports:
   - MODBUS_RTU
-  points: 61
+  points: 53
   status: vendor-confirmed
-  source: Carlo Gavazzi EMS Modbus Communication Protocol v1.0 (Oct 2025), section 4 "Carlo Gavazzi
-    Modbus map" (AV2 direct-connection main meter, id codes 2018d/2034d); EM340 datasheet EM340 DS 280222
-  source_url: https://www.gavazziautomation.com/en-global/products/energy-management/energy-meters/em340
+  source: Carlo Gavazzi EM300 & ET300 Series Communication Protocol, Version 2 Revision 17 (2021-07-05),
+    EM340 subset; EM340 datasheet EM340 DS 280222
+  source_url: https://www.gavazziautomation.com/fileadmin/images/PIM/OTHERSTUFF/COMPRO/EM330_EM340_ET330_ET340_CP.pdf
   measurands:
   - voltage
   - current
@@ -223,7 +223,6 @@ devices:
   - frequency
   - energy_active
   - energy_reactive
-  - energy_apparent
 - vendor: Carlo Gavazzi
   model: EM530 (three-phase, CT connection)
   category: energy-meter
@@ -233,9 +232,9 @@ devices:
   - MODBUS_RTU
   points: 61
   status: vendor-confirmed
-  source: Carlo Gavazzi EMS Modbus Communication Protocol v1.0 (Oct 2025), section 4 "Carlo Gavazzi
-    Modbus map" (AV5 5 A CT / MV5 333 mV main meter); EM530 datasheet EM530 DS ENG
-  source_url: https://www.gavazziautomation.com/en-global/products/energy-management/energy-analyzers/em530
+  source: Carlo Gavazzi EM500 communication protocol (AV5 5 A CT / MV5 333 mV main meter; same map
+    as the EMS Modbus Communication Protocol v1.0); EM530 datasheet EM530 DS ENG
+  source_url: https://www.gavazziautomation.com/fileadmin/images/PIM/OTHERSTUFF/COMPRO/EM500_CPP.pdf
   measurands:
   - voltage
   - current

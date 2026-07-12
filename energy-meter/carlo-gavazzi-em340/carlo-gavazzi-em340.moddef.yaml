@@ -1,11 +1,11 @@
-# Source: Carlo Gavazzi EMS Modbus Communication Protocol, Version 1.0 (Oct 2025),
-# section 4 "Carlo Gavazzi Modbus map". The EM340 is the AV2 (direct connection,
-# up to 65 A) main-meter hardware covered by that map (identification codes
-# 2018d / 2034d); the EM340 datasheet (EM340 DS 280222) confirms the measured
-# variables and the RS485 Modbus RTU interface. The register layout is common to
-# the Carlo Gavazzi EM3xx/EM5xx family, so it matches the EM530 profile.
+# Source: Carlo Gavazzi EM300 & ET300 Series Communication Protocol,
+# Version 2 Revision 17 (2021-07-05). This document covers the EM330, EM340,
+# ET330, and ET340; the EM340 is the three-phase, direct-connection (up to
+# 65 A) meter. The EM340 datasheet (EM340 DS 280222) confirms the hardware.
 # Register map confirmed against the vendor document above; not yet hardware-verified.
 # Part of the ModDef blessed device registry.
+#
+# https://www.gavazziautomation.com/fileadmin/images/PIM/OTHERSTUFF/COMPRO/EM330_EM340_ET330_ET340_CP.pdf
 #
 # Encoding notes (from the vendor protocol document):
 #   - Measured variables live in the read-only register space, read with Modbus
@@ -17,14 +17,14 @@
 #     LSW->MSW, i.e. the low word comes first (WORD_LITTLE_ENDIAN).
 #   - Each variable carries a "value weight" (Volt*10, Ampere*1000, Watt*10,
 #     ...). The transform.scale reverses it, so decoded values are in canonical
-#     units (V, A, W, var, VA, Hz, kWh, kvarh, kVAh, %).
-#   - Power factor sign follows the IEC convention (negative when the active
-#     power is exported); the separate L/C-convention PF registers (0072h-0075h)
-#     and EMS-gateway-only registers (digital I/O, tariff, output command) are
-#     out of scope for the standalone meter.
-#   - Coverage: the section 4.1 three-phase instantaneous variables, the energy
-#     counters (total, partial, per-phase, import/export), run-hour meters, THD,
-#     and the firmware version word.
+#     units (V, A, W, var, VA, Hz, kWh, kvarh, %).
+#   - Power factor sign follows the convention in the doc: negative values are
+#     exported active power, positive values imported active power.
+#   - Coverage is the EM340 subset of the EM300 map. Registers the doc marks
+#     "only ET series and EM330" (run-hour meters, neutral current An) and the
+#     apparent-energy / negative-partial-energy / inductive-capacitive-load
+#     registers (not available on the EM340) are omitted; the EM340-specific
+#     kW demand and demand-peak registers are included.
 
 doc_id: carlogavazzi.em340
 name: Carlo Gavazzi EM340 Three-Phase Energy Meter
@@ -43,7 +43,7 @@ devices:
       - block_id: measurements
         name: Measured Variables (read with FC03/FC04)
         space: INPUT_REGISTER
-        length_words: 154
+        length_words: 152
         points:
           - point_id: voltage_l1_n
             name: Voltage L1-N
@@ -300,7 +300,7 @@ devices:
 
           - point_id: power_factor_l1
             name: Power Factor L1
-            description: Phase 1 power factor, IEC sign convention
+            description: Phase 1 power factor (negative = exported active power)
             access: READ_ONLY
             storage_type: S16
             value_type: { primitive: DECIMAL }
@@ -311,7 +311,7 @@ devices:
 
           - point_id: power_factor_l2
             name: Power Factor L2
-            description: Phase 2 power factor, IEC sign convention
+            description: Phase 2 power factor (negative = exported active power)
             access: READ_ONLY
             storage_type: S16
             value_type: { primitive: DECIMAL }
@@ -322,7 +322,7 @@ devices:
 
           - point_id: power_factor_l3
             name: Power Factor L3
-            description: Phase 3 power factor, IEC sign convention
+            description: Phase 3 power factor (negative = exported active power)
             access: READ_ONLY
             storage_type: S16
             value_type: { primitive: DECIMAL }
@@ -333,7 +333,7 @@ devices:
 
           - point_id: power_factor_sys
             name: Power Factor System
-            description: System power factor, IEC sign convention
+            description: System power factor (negative = exported active power)
             access: READ_ONLY
             storage_type: S16
             value_type: { primitive: DECIMAL }
@@ -344,7 +344,7 @@ devices:
 
           - point_id: phase_sequence
             name: Phase Sequence
-            description: Phase rotation, +1 = L1-L2-L3, -1 = L1-L3-L2 (meaningful only in three-phase systems)
+            description: Phase rotation, 1 = L1-L2-L3, 0 = L1-L3-L2 (meaningful only in three-phase systems)
             access: READ_ONLY
             storage_type: S16
             value_type: { primitive: INT32 }
@@ -382,6 +382,28 @@ devices:
             transform: { scale: { numerator: 1, denominator: 10 } }
             unit: kvarh
             measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: REGISTER, aggregation: TOTAL }
+
+          - point_id: active_power_demand
+            name: Active Power Demand
+            description: System active power demand over the demand interval
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 56, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: AVERAGE }
+
+          - point_id: active_power_demand_peak
+            name: Active Power Demand Peak
+            description: Peak system active power demand since last reset
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 58, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: MAXIMUM }
 
           - point_id: energy_active_import_partial
             name: Import Active Energy Partial
@@ -480,102 +502,6 @@ devices:
             unit: kvarh
             measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: REGISTER, aggregation: TOTAL }
 
-          - point_id: energy_active_export_partial
-            name: Export Active Energy Partial
-            description: Resettable partial exported active energy counter
-            access: READ_ONLY
-            storage_type: S32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 82, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 10 } }
-            unit: kWh
-            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: SESSION, aggregation: TOTAL }
-
-          - point_id: energy_reactive_export_partial
-            name: Export Reactive Energy Partial
-            description: Resettable partial exported reactive energy counter
-            access: READ_ONLY
-            storage_type: S32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 84, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 10 } }
-            unit: kvarh
-            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: SESSION, aggregation: TOTAL }
-
-          - point_id: energy_apparent_total
-            name: Apparent Energy Total
-            description: Total apparent energy
-            access: READ_ONLY
-            storage_type: S32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 86, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 10 } }
-            unit: kVAh
-            measurand: { base_quantity: energy_apparent, accumulation: REGISTER, aggregation: TOTAL }
-
-          - point_id: energy_apparent_partial
-            name: Apparent Energy Partial
-            description: Resettable partial apparent energy counter
-            access: READ_ONLY
-            storage_type: S32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 88, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 10 } }
-            unit: kVAh
-            measurand: { base_quantity: energy_apparent, accumulation: SESSION, aggregation: TOTAL }
-
-          - point_id: run_hour_meter
-            name: Run Hour Meter
-            description: Cumulative run-hour meter
-            access: READ_ONLY
-            storage_type: S32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 90, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 100 } }
-            unit: h
-
-          - point_id: run_hour_meter_partial
-            name: Run Hour Meter Partial
-            description: Resettable partial run-hour meter
-            access: READ_ONLY
-            storage_type: S32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 110, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 100 } }
-            unit: h
-
-          - point_id: load_type_l1
-            name: Inductive/Capacitive Load L1
-            description: Phase 1 load nature, +1 = inductive, -1 = capacitive
-            access: READ_ONLY
-            storage_type: S16
-            value_type: { primitive: INT32 }
-            mapping: { space: INPUT_REGISTER, offset: 118, length_words: 1, byte_order: BIG_ENDIAN }
-
-          - point_id: load_type_l2
-            name: Inductive/Capacitive Load L2
-            description: Phase 2 load nature, +1 = inductive, -1 = capacitive
-            access: READ_ONLY
-            storage_type: S16
-            value_type: { primitive: INT32 }
-            mapping: { space: INPUT_REGISTER, offset: 119, length_words: 1, byte_order: BIG_ENDIAN }
-
-          - point_id: load_type_l3
-            name: Inductive/Capacitive Load L3
-            description: Phase 3 load nature, +1 = inductive, -1 = capacitive
-            access: READ_ONLY
-            storage_type: S16
-            value_type: { primitive: INT32 }
-            mapping: { space: INPUT_REGISTER, offset: 120, length_words: 1, byte_order: BIG_ENDIAN }
-
-          - point_id: load_type_sys
-            name: Inductive/Capacitive Load System
-            description: System load nature, +1 = inductive, -1 = capacitive
-            access: READ_ONLY
-            storage_type: S16
-            value_type: { primitive: INT32 }
-            mapping: { space: INPUT_REGISTER, offset: 121, length_words: 1, byte_order: BIG_ENDIAN }
-
           - point_id: thd_current_l1
             name: Current THD L1
             description: Phase 1 current total harmonic distortion
@@ -666,30 +592,26 @@ devices:
             transform: { scale: { numerator: 1, denominator: 100 } }
             unit: "%"
 
-          - point_id: current_neutral
-            name: Neutral Current
-            description: Neutral RMS current (An)
-            access: READ_ONLY
-            storage_type: S32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 152, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 1000 } }
-            unit: A
-            measurand: { base_quantity: current, phase_ref: N }
-
-      # Firmware version word (Modicon 300771, physical 0302h): a single register
-      # packing major/minor in the high byte (bits 4..7 major, 0..3 minor) and the
-      # patch number in the low byte.
+      # Firmware version code (300771 / 0302h, 0 = "A", 1 = "B", ...) and
+      # revision code (300772 / 0303h, 0 = revision "0", ...).
       - block_id: info
         name: Device Information
         space: INPUT_REGISTER
         start_offset: 770
-        length_words: 1
+        length_words: 2
         points:
           - point_id: firmware_version
-            name: Firmware Version
-            description: Firmware major/minor/patch, packed (high byte = major.minor nibbles, low byte = patch)
+            name: Firmware Version Code
+            description: Firmware version code (0 = "A", 1 = "B", and so on)
             access: READ_ONLY
             storage_type: U16
             value_type: { primitive: UINT32 }
             mapping: { space: INPUT_REGISTER, offset: 770, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: firmware_revision
+            name: Firmware Revision Code
+            description: Firmware revision code (0 = revision "0", and so on)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 771, length_words: 1, byte_order: BIG_ENDIAN }
