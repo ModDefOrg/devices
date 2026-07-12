@@ -89,3 +89,10 @@ source in the header, and adds something the existing set doesn't already cover
 (a new device family, or an encoding pattern not yet represented). Open the
 larger field of candidate devices against `moddef lint` first; promote here once
 the source is confirmed.
+
+## License
+
+Device profiles in this registry are dedicated to the public domain under
+[CC0-1.0](LICENSE), so you can embed them without attribution obligations. See
+[NOTICE](NOTICE) for SunSpec-derived content and [CONTRIBUTING.md](CONTRIBUTING.md)
+for the sign-off requirement.

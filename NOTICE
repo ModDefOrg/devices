@@ -1,0 +1,9 @@
+ModDef Device Registry
+Dedicated to the public domain under CC0-1.0 (see LICENSE).
+
+SunSpec Alliance Model Definitions
+Device profiles that map SunSpec models (for example
+solar-inverter/fronius-gen24) reference SunSpec register model identifiers
+and field names derived from the SunSpec Alliance public model
+specifications (https://sunspec.org). These are independent ModDef mappings
+and are not endorsed by or affiliated with the SunSpec Alliance.
