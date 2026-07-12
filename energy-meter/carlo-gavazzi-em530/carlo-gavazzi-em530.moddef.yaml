@@ -1,0 +1,694 @@
+# Source: Carlo Gavazzi EMS Modbus Communication Protocol, Version 1.0 (Oct 2025),
+# section 4 "Carlo Gavazzi Modbus map". The EM530 is the AV5 (5 A CT) / MV5
+# (333 mV) main-meter hardware described by that map; the EM530 datasheet
+# (23/02/2026 EM530 DS ENG) confirms the measured variables and the RS485
+# Modbus RTU interface.
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# Encoding notes (from the vendor protocol document):
+#   - Measured variables live in the read-only register space, read with Modbus
+#     function code 03 or 04 (used interchangeably per the doc). Physical (word)
+#     addresses are given in hex and map directly to the ModDef offset:
+#     0000h -> 0, 0034h -> 52, and so on.
+#   - Numeric formats are scaled two's-complement integers. Within a word the
+#     byte order is MSB->LSB (BIG_ENDIAN). For 32-bit values the word order is
+#     LSW->MSW, i.e. the low word comes first (WORD_LITTLE_ENDIAN).
+#   - Each variable carries a "value weight" (Volt*10, Ampere*1000, Watt*10,
+#     ...). The transform.scale reverses it, so decoded values are in canonical
+#     units (V, A, W, var, VA, Hz, kWh, kvarh, kVAh, %).
+#   - Power factor sign follows the IEC convention (negative when the active
+#     power is exported); the separate L/C-convention PF registers (0072h-0075h)
+#     and EMS-gateway-only registers (digital I/O, tariff, output command) are
+#     out of scope for the standalone meter.
+#   - Coverage: the section 4.1 three-phase instantaneous variables, the energy
+#     counters (total, partial, per-phase, import/export), run-hour meters, THD,
+#     and the firmware version word.
+
+doc_id: carlogavazzi.em530
+name: Carlo Gavazzi EM530 Three-Phase Energy Analyzer
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+devices:
+  - device_id: carlo-gavazzi-em530
+    vendor: Carlo Gavazzi
+    model: EM530
+    supported_transports:
+      - MODBUS_RTU
+    blocks:
+      - block_id: measurements
+        name: Measured Variables (read with FC03/FC04)
+        space: INPUT_REGISTER
+        length_words: 154
+        points:
+          - point_id: voltage_l1_n
+            name: Voltage L1-N
+            description: Phase 1 line-to-neutral RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+
+          - point_id: voltage_l2_n
+            name: Voltage L2-N
+            description: Phase 2 line-to-neutral RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 2, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+
+          - point_id: voltage_l3_n
+            name: Voltage L3-N
+            description: Phase 3 line-to-neutral RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 4, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+
+          - point_id: voltage_l1_l2
+            name: Voltage L1-L2
+            description: Line 1 to line 2 RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 6, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_L2 }
+
+          - point_id: voltage_l2_l3
+            name: Voltage L2-L3
+            description: Line 2 to line 3 RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 8, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_L3 }
+
+          - point_id: voltage_l3_l1
+            name: Voltage L3-L1
+            description: Line 3 to line 1 RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 10, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_L1 }
+
+          - point_id: current_l1
+            name: Current L1
+            description: Phase 1 RMS line current
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 12, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1 }
+
+          - point_id: current_l2
+            name: Current L2
+            description: Phase 2 RMS line current
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 14, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+
+          - point_id: current_l3
+            name: Current L3
+            description: Phase 3 RMS line current
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 16, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+
+          - point_id: active_power_l1
+            name: Active Power L1
+            description: Phase 1 active power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 18, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+
+          - point_id: active_power_l2
+            name: Active Power L2
+            description: Phase 2 active power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 20, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+
+          - point_id: active_power_l3
+            name: Active Power L3
+            description: Phase 3 active power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 22, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+
+          - point_id: apparent_power_l1
+            name: Apparent Power L1
+            description: Phase 1 apparent power (volt-amps)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 24, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L1 }
+
+          - point_id: apparent_power_l2
+            name: Apparent Power L2
+            description: Phase 2 apparent power (volt-amps)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 26, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L2 }
+
+          - point_id: apparent_power_l3
+            name: Apparent Power L3
+            description: Phase 3 apparent power (volt-amps)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 28, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L3 }
+
+          - point_id: reactive_power_l1
+            name: Reactive Power L1
+            description: Phase 1 reactive power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 30, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L1 }
+
+          - point_id: reactive_power_l2
+            name: Reactive Power L2
+            description: Phase 2 reactive power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 32, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L2 }
+
+          - point_id: reactive_power_l3
+            name: Reactive Power L3
+            description: Phase 3 reactive power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 34, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L3 }
+
+          - point_id: voltage_ln_sys
+            name: Voltage L-N System
+            description: System (average) line-to-neutral voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 36, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, aggregation: AVERAGE }
+
+          - point_id: voltage_ll_sys
+            name: Voltage L-L System
+            description: System (average) line-to-line voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 38, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, aggregation: AVERAGE }
+
+          - point_id: active_power_sys
+            name: Active Power System
+            description: Total system active power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 40, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: apparent_power_sys
+            name: Apparent Power System
+            description: Total system apparent power (volt-amps)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 42, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL }
+
+          - point_id: reactive_power_sys
+            name: Reactive Power System
+            description: Total system reactive power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 44, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL }
+
+          - point_id: power_factor_l1
+            name: Power Factor L1
+            description: Phase 1 power factor, IEC sign convention
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 46, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L1 }
+
+          - point_id: power_factor_l2
+            name: Power Factor L2
+            description: Phase 2 power factor, IEC sign convention
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 47, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L2 }
+
+          - point_id: power_factor_l3
+            name: Power Factor L3
+            description: Phase 3 power factor, IEC sign convention
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 48, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L3 }
+
+          - point_id: power_factor_sys
+            name: Power Factor System
+            description: System power factor, IEC sign convention
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 49, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, aggregation: TOTAL }
+
+          - point_id: phase_sequence
+            name: Phase Sequence
+            description: Phase rotation, +1 = L1-L2-L3, -1 = L1-L3-L2 (meaningful only in three-phase systems)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: INPUT_REGISTER, offset: 50, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: frequency
+            name: Frequency
+            description: Line frequency
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 51, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+
+          - point_id: energy_active_import_total
+            name: Import Active Energy Total
+            description: Total imported (positive) active energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 52, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER, aggregation: TOTAL }
+
+          - point_id: energy_reactive_import_total
+            name: Import Reactive Energy Total
+            description: Total imported (positive) reactive energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 54, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: REGISTER, aggregation: TOTAL }
+
+          - point_id: energy_active_import_partial
+            name: Import Active Energy Partial
+            description: Resettable partial imported active energy counter
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 60, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: energy_reactive_import_partial
+            name: Import Reactive Energy Partial
+            description: Resettable partial imported reactive energy counter
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 62, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: energy_active_import_l1
+            name: Import Active Energy L1
+            description: Phase 1 imported active energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 64, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER, phase_ref: L1 }
+
+          - point_id: energy_active_import_l2
+            name: Import Active Energy L2
+            description: Phase 2 imported active energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 66, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER, phase_ref: L2 }
+
+          - point_id: energy_active_import_l3
+            name: Import Active Energy L3
+            description: Phase 3 imported active energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 68, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER, phase_ref: L3 }
+
+          - point_id: energy_active_import_t1
+            name: Import Active Energy Tariff 1
+            description: Imported active energy accumulated under tariff 1
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 70, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+
+          - point_id: energy_active_import_t2
+            name: Import Active Energy Tariff 2
+            description: Imported active energy accumulated under tariff 2
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 72, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+
+          - point_id: energy_active_export_total
+            name: Export Active Energy Total
+            description: Total exported (negative) active energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 78, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: REGISTER, aggregation: TOTAL }
+
+          - point_id: energy_reactive_export_total
+            name: Export Reactive Energy Total
+            description: Total exported (negative) reactive energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 80, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: REGISTER, aggregation: TOTAL }
+
+          - point_id: energy_active_export_partial
+            name: Export Active Energy Partial
+            description: Resettable partial exported active energy counter
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 82, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: energy_reactive_export_partial
+            name: Export Reactive Energy Partial
+            description: Resettable partial exported reactive energy counter
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 84, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: energy_apparent_total
+            name: Apparent Energy Total
+            description: Total apparent energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 86, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kVAh
+            measurand: { base_quantity: energy_apparent, accumulation: REGISTER, aggregation: TOTAL }
+
+          - point_id: energy_apparent_partial
+            name: Apparent Energy Partial
+            description: Resettable partial apparent energy counter
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 88, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kVAh
+            measurand: { base_quantity: energy_apparent, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: run_hour_meter
+            name: Run Hour Meter
+            description: Cumulative run-hour meter
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 90, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: h
+
+          - point_id: run_hour_meter_partial
+            name: Run Hour Meter Partial
+            description: Resettable partial run-hour meter
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 110, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: h
+
+          - point_id: load_type_l1
+            name: Inductive/Capacitive Load L1
+            description: Phase 1 load nature, +1 = inductive, -1 = capacitive
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: INPUT_REGISTER, offset: 118, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: load_type_l2
+            name: Inductive/Capacitive Load L2
+            description: Phase 2 load nature, +1 = inductive, -1 = capacitive
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: INPUT_REGISTER, offset: 119, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: load_type_l3
+            name: Inductive/Capacitive Load L3
+            description: Phase 3 load nature, +1 = inductive, -1 = capacitive
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: INPUT_REGISTER, offset: 120, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: load_type_sys
+            name: Inductive/Capacitive Load System
+            description: System load nature, +1 = inductive, -1 = capacitive
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: INPUT_REGISTER, offset: 121, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: thd_current_l1
+            name: Current THD L1
+            description: Phase 1 current total harmonic distortion
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 130, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: thd_current_l2
+            name: Current THD L2
+            description: Phase 2 current total harmonic distortion
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 132, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: thd_current_l3
+            name: Current THD L3
+            description: Phase 3 current total harmonic distortion
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 134, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: thd_voltage_l1_n
+            name: Voltage THD L1-N
+            description: Phase 1 line-to-neutral voltage total harmonic distortion
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 138, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: thd_voltage_l2_n
+            name: Voltage THD L2-N
+            description: Phase 2 line-to-neutral voltage total harmonic distortion
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 140, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: thd_voltage_l3_n
+            name: Voltage THD L3-N
+            description: Phase 3 line-to-neutral voltage total harmonic distortion
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 142, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: thd_voltage_l1_l2
+            name: Voltage THD L1-L2
+            description: Line 1 to line 2 voltage total harmonic distortion
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 146, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: thd_voltage_l2_l3
+            name: Voltage THD L2-L3
+            description: Line 2 to line 3 voltage total harmonic distortion
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 148, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: thd_voltage_l3_l1
+            name: Voltage THD L3-L1
+            description: Line 3 to line 1 voltage total harmonic distortion
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 150, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: current_neutral
+            name: Neutral Current
+            description: Neutral RMS current (An)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 152, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: N }
+
+      # Firmware version word (Modicon 300771, physical 0302h): a single register
+      # packing major/minor in the high byte (bits 4..7 major, 0..3 minor) and the
+      # patch number in the low byte.
+      - block_id: info
+        name: Device Information
+        space: INPUT_REGISTER
+        start_offset: 770
+        length_words: 1
+        points:
+          - point_id: firmware_version
+            name: Firmware Version
+            description: Firmware major/minor/patch, packed (high byte = major.minor nibbles, low byte = patch)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 770, length_words: 1, byte_order: BIG_ENDIAN }

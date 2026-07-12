@@ -201,3 +201,74 @@ devices:
   - warning_code
   - alarm_status
   - device_status
+- vendor: Carlo Gavazzi
+  model: EM340 (three-phase, direct connection)
+  category: energy-meter
+  doc_id: carlogavazzi.em340
+  profile: energy-meter/carlo-gavazzi-em340/carlo-gavazzi-em340.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 61
+  status: vendor-confirmed
+  source: Carlo Gavazzi EMS Modbus Communication Protocol v1.0 (Oct 2025), section 4 "Carlo Gavazzi
+    Modbus map" (AV2 direct-connection main meter, id codes 2018d/2034d); EM340 datasheet EM340 DS 280222
+  source_url: https://www.gavazziautomation.com/en-global/products/energy-management/energy-meters/em340
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - apparent_power
+  - reactive_power
+  - power_factor
+  - frequency
+  - energy_active
+  - energy_reactive
+  - energy_apparent
+- vendor: Carlo Gavazzi
+  model: EM530 (three-phase, CT connection)
+  category: energy-meter
+  doc_id: carlogavazzi.em530
+  profile: energy-meter/carlo-gavazzi-em530/carlo-gavazzi-em530.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 61
+  status: vendor-confirmed
+  source: Carlo Gavazzi EMS Modbus Communication Protocol v1.0 (Oct 2025), section 4 "Carlo Gavazzi
+    Modbus map" (AV5 5 A CT / MV5 333 mV main meter); EM530 datasheet EM530 DS ENG
+  source_url: https://www.gavazziautomation.com/en-global/products/energy-management/energy-analyzers/em530
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - apparent_power
+  - reactive_power
+  - power_factor
+  - frequency
+  - energy_active
+  - energy_reactive
+  - energy_apparent
+- vendor: Sigenergy
+  model: SigenStor / Sigen Hybrid (hybrid ESS)
+  category: battery-storage
+  doc_id: sigenergy.sigenstor
+  profile: battery-storage/sigenergy-sigenstor/sigenergy-sigenstor.moddef.yaml
+  transports:
+  - MODBUS_TCP
+  - MODBUS_RTU
+  points: 51
+  status: vendor-confirmed
+  source: Sigenergy Modbus Protocol v1.7 (2024-04-09), plant running information + hybrid inverter
+    information + plant power-control holding registers
+  source_url: https://www.sigenergy.com/
+  measurands:
+  - active_power
+  - reactive_power
+  - pv_power
+  - battery_power
+  - state_of_charge
+  - charge_limit
+  - discharge_limit
+  - energy_active
+  - power_factor
+  - device_status
+  - alarm_status
