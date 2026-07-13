@@ -6,11 +6,15 @@
 # three-phase hybrid inverters / energy storage systems (table 1-1).
 #
 # Encoding notes (from the vendor protocol document):
-#   - RS485 RTU (9600 8N1 default) or Modbus TCP (server, port 502). Standard
-#     function codes: 0x04 for read-only registers, 0x03/0x06/0x10 for
-#     read/write holding registers.
-#   - Plant-level registers (this profile) are addressed to the plant/gateway
-#     slave address 247; per-inverter registers use the inverter slave address.
+#   - RS485 RTU (9600 8N1 default) or Modbus TCP (server, port 502). The vendor
+#     document assigns read function code 0x03 to the read-only (3xxxx) block and
+#     0x04 to the holding (4xxxx) block, with 0x06/0x10 for writes — a swap of the
+#     usual Modbus read codes. This profile keeps the ModDef-idiomatic mapping
+#     (read-only -> INPUT_REGISTER, holding -> HOLDING_REGISTER); adapters that
+#     follow the vendor's literal function codes must account for the swap.
+#   - Plant-level registers are addressed to the plant/gateway slave address 247;
+#     per-inverter and DC-charger registers use the inverter slave address (set at
+#     read time via the transport binding, not encoded here).
 #   - Documented addresses are 1-based Modicon (3xxxx read-only input registers,
 #     4xxxx holding registers). The ModDef offset = address - 30000 for the
 #     read-only block and address - 40000 for the holding block.
@@ -20,9 +24,11 @@
 #   - The document does not state the 32/64-bit word order; this profile assumes
 #     big-endian word order (most-significant word first), the common default
 #     for these inverters. Verify against hardware before relying on wide values.
-#   - Coverage: plant running information (grid, PV, ESS, per-phase powers,
-#     alarms, availability), the hybrid-inverter nameplate and energy counters,
-#     and the plant-level power-control holding registers.
+#   - Coverage: all four register tables of the protocol document —
+#     5.1 plant running information, 5.2 plant parameter setting,
+#     5.3 hybrid-inverter running information (nameplate, energy counters,
+#     battery, AC measurements, PV strings, DC charger), and
+#     5.4 hybrid-inverter parameter setting.
 
 doc_id: sigenergy.sigenstor
 name: Sigenergy SigenStor / Sigen Hybrid Energy Storage System
@@ -39,7 +45,7 @@ devices:
       - MODBUS_TCP
       - MODBUS_RTU
     blocks:
-      # --- Plant running information (read-only, FC04) -------------------
+      # --- 5.1 Plant running information (read-only, plant slave 247) ------
       - block_id: plant_running
         name: Plant Running Information (read-only)
         space: INPUT_REGISTER
@@ -53,6 +59,15 @@ devices:
             value_type: { primitive: UINT32 }
             mapping: { space: INPUT_REGISTER, offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
             unit: s
+
+          - point_id: system_time_zone
+            name: System Time Zone
+            description: Plant time-zone offset
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 2, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: min
 
           - point_id: ems_work_mode
             name: EMS Work Mode
@@ -277,6 +292,46 @@ devices:
             unit: kW
             measurand: { base_quantity: battery_power }
 
+          - point_id: available_max_active_power
+            name: Available Max Active Power
+            description: Active power that can be fed to the AC terminal, running inverters only
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 39, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+
+          - point_id: available_min_active_power
+            name: Available Min Active Power
+            description: Active power that can be absorbed from the AC terminal, running inverters only
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 41, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+
+          - point_id: available_max_reactive_power
+            name: Available Max Reactive Power
+            description: Reactive power that can be fed to the AC terminal, running inverters only
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 43, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+
+          - point_id: available_min_reactive_power
+            name: Available Min Reactive Power
+            description: Reactive power that can be absorbed from the AC terminal, running inverters only
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 45, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+
           - point_id: available_max_charging_power
             name: Available Max Charging Power
             description: Available charging headroom across running inverters
@@ -307,6 +362,72 @@ devices:
             value_type: { primitive: UINT32 }
             mapping: { space: INPUT_REGISTER, offset: 51, length_words: 1, byte_order: BIG_ENDIAN }
             measurand: { base_quantity: device_status }
+
+          - point_id: grid_active_power_l1
+            name: Grid Phase A Active Power
+            description: Grid-sensor active power, phase A; >0 buying from grid, <0 selling to grid
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 52, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+
+          - point_id: grid_active_power_l2
+            name: Grid Phase B Active Power
+            description: Grid-sensor active power, phase B
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 54, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+
+          - point_id: grid_active_power_l3
+            name: Grid Phase C Active Power
+            description: Grid-sensor active power, phase C
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 56, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+
+          - point_id: grid_reactive_power_l1
+            name: Grid Phase A Reactive Power
+            description: Grid-sensor reactive power, phase A
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 58, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L1 }
+
+          - point_id: grid_reactive_power_l2
+            name: Grid Phase B Reactive Power
+            description: Grid-sensor reactive power, phase B
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 60, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L2 }
+
+          - point_id: grid_reactive_power_l3
+            name: Grid Phase C Reactive Power
+            description: Grid-sensor reactive power, phase C
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 62, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L3 }
 
           - point_id: available_max_charging_capacity
             name: Available Max Charging Capacity
@@ -348,125 +469,10 @@ devices:
             transform: { scale: { numerator: 1, denominator: 1000 } }
             unit: kW
 
-      # --- Hybrid inverter nameplate + energy counters (read-only, FC04) --
-      - block_id: inverter_info
-        name: Hybrid Inverter Information (read-only)
-        space: INPUT_REGISTER
-        start_offset: 500
-        length_words: 68
-        points:
-          - point_id: model_type
-            name: Model Type
-            description: Inverter model string
-            access: READ_ONLY
-            storage_type: STRING_ASCII
-            value_type: { primitive: STRING }
-            mapping: { space: INPUT_REGISTER, offset: 500, length_words: 15, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
-
-          - point_id: serial_number
-            name: Serial Number
-            description: Inverter serial number string
-            access: READ_ONLY
-            storage_type: STRING_ASCII
-            value_type: { primitive: STRING }
-            mapping: { space: INPUT_REGISTER, offset: 515, length_words: 10, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
-
-          - point_id: firmware_version
-            name: Machine Firmware Version
-            description: Inverter firmware version string
-            access: READ_ONLY
-            storage_type: STRING_ASCII
-            value_type: { primitive: STRING }
-            mapping: { space: INPUT_REGISTER, offset: 525, length_words: 15, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
-
-          - point_id: rated_active_power
-            name: Rated Active Power
-            description: Inverter rated active power
-            access: READ_ONLY
-            storage_type: U32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 540, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 1000 } }
-            unit: kW
-
-          - point_id: max_apparent_power_inv
-            name: Inverter Max Apparent Power
-            description: Inverter maximum apparent power
-            access: READ_ONLY
-            storage_type: U32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 542, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 1000 } }
-            unit: kVA
-
-          - point_id: rated_battery_capacity
-            name: Rated Battery Capacity
-            description: Inverter rated battery energy capacity
-            access: READ_ONLY
-            storage_type: U32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 548, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 100 } }
-            unit: kWh
-
-          - point_id: energy_export_daily
-            name: Daily Export Energy
-            description: Energy exported to grid today
-            access: READ_ONLY
-            storage_type: U32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 554, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 100 } }
-            unit: kWh
-            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: DAILY }
-
-          - point_id: energy_export_total
-            name: Accumulated Export Energy
-            description: Lifetime energy exported to grid
-            access: READ_ONLY
-            storage_type: U64
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 556, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 100 } }
-            unit: kWh
-            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME }
-
-          - point_id: energy_import_daily
-            name: Daily Import Energy
-            description: Energy imported from grid today
-            access: READ_ONLY
-            storage_type: U32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 560, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 100 } }
-            unit: kWh
-            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: DAILY }
-
-          - point_id: energy_import_total
-            name: Accumulated Import Energy
-            description: Lifetime energy imported from grid
-            access: READ_ONLY
-            storage_type: U64
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 562, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 100 } }
-            unit: kWh
-            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME }
-
-          - point_id: battery_charge_energy_daily
-            name: Battery Daily Charge Energy
-            description: Energy charged into the battery today
-            access: READ_ONLY
-            storage_type: U32
-            value_type: { primitive: DECIMAL }
-            mapping: { space: INPUT_REGISTER, offset: 566, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
-            transform: { scale: { numerator: 1, denominator: 100 } }
-            unit: kWh
-            measurand: { base_quantity: energy_active, direction: CHARGE, accumulation: DAILY }
-
-      # --- Plant power control (holding registers, FC03/06/10) -----------
+      # --- 5.2 Plant parameter setting (holding, plant slave 247) ----------
       # These take effect only when Remote EMS is enabled (offset 29 = 1) and,
       # for the limit registers, under the matching remote EMS control mode.
+      # Per-phase targets are valid only when the output type is L1/L2/L3/N.
       - block_id: plant_control
         name: Plant Power Control (holding registers)
         space: HOLDING_REGISTER
@@ -525,6 +531,21 @@ devices:
                 min_value: { numerator: -100, denominator: 1 }
                 max_value: { numerator: 100, denominator: 1 }
 
+          - point_id: qs_target
+            name: Q/S Adjustment Target
+            description: Reactive-to-apparent-power ratio target, range [-60, 60]%
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 6, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: -60, denominator: 1 }
+                max_value: { numerator: 60, denominator: 1 }
+
           - point_id: power_factor_target
             name: Power Factor Target
             description: Power-factor adjustment target, valid range (-1, -0.8] and [0.8, 1]
@@ -538,6 +559,198 @@ devices:
             write:
               behavior: DIRECT
 
+          - point_id: active_power_target_l1
+            name: Phase A Active Power Target
+            description: Fixed active-power target, phase A (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 8, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+            write:
+              behavior: DIRECT
+
+          - point_id: active_power_target_l2
+            name: Phase B Active Power Target
+            description: Fixed active-power target, phase B (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 10, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+            write:
+              behavior: DIRECT
+
+          - point_id: active_power_target_l3
+            name: Phase C Active Power Target
+            description: Fixed active-power target, phase C (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 12, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+            write:
+              behavior: DIRECT
+
+          - point_id: reactive_power_target_l1
+            name: Phase A Reactive Power Target
+            description: Fixed reactive-power target, phase A (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 14, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L1 }
+            write:
+              behavior: DIRECT
+
+          - point_id: reactive_power_target_l2
+            name: Phase B Reactive Power Target
+            description: Fixed reactive-power target, phase B (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 16, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L2 }
+            write:
+              behavior: DIRECT
+
+          - point_id: reactive_power_target_l3
+            name: Phase C Reactive Power Target
+            description: Fixed reactive-power target, phase C (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 18, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L3 }
+            write:
+              behavior: DIRECT
+
+          - point_id: active_power_percent_target_l1
+            name: Phase A Active Power Percentage Target
+            description: Active-power percentage target, phase A, range [-100, 100]% (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 20, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: -100, denominator: 1 }
+                max_value: { numerator: 100, denominator: 1 }
+
+          - point_id: active_power_percent_target_l2
+            name: Phase B Active Power Percentage Target
+            description: Active-power percentage target, phase B, range [-100, 100]% (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 21, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: -100, denominator: 1 }
+                max_value: { numerator: 100, denominator: 1 }
+
+          - point_id: active_power_percent_target_l3
+            name: Phase C Active Power Percentage Target
+            description: Active-power percentage target, phase C, range [-100, 100]% (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 22, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: -100, denominator: 1 }
+                max_value: { numerator: 100, denominator: 1 }
+
+          - point_id: qs_target_l1
+            name: Phase A Q/S Adjustment Target
+            description: Q/S ratio target, phase A, range [-60, 60]% (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 23, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: -60, denominator: 1 }
+                max_value: { numerator: 60, denominator: 1 }
+
+          - point_id: qs_target_l2
+            name: Phase B Q/S Adjustment Target
+            description: Q/S ratio target, phase B, range [-60, 60]% (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 24, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: -60, denominator: 1 }
+                max_value: { numerator: 60, denominator: 1 }
+
+          - point_id: qs_target_l3
+            name: Phase C Q/S Adjustment Target
+            description: Q/S ratio target, phase C, range [-60, 60]% (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 25, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: -60, denominator: 1 }
+                max_value: { numerator: 60, denominator: 1 }
+
+          - point_id: active_power_upper_limit
+            name: Active Power Fixed Upper Limit
+            description: Upper limit for fixed active-power adjustment; effective value is the lesser of this and active_power_target
+            access: READ_WRITE
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 26, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            write:
+              behavior: DIRECT
+
+          - point_id: active_power_percent_upper_limit
+            name: Active Power Percentage Upper Limit
+            description: Upper limit for active-power percentage adjustment; effective value is the lesser of this and active_power_percent_target
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 28, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+            write:
+              behavior: DIRECT
+
           - point_id: remote_ems_enable
             name: Remote EMS Enable
             description: Enable remote EMS control - 0 disabled, 1 enabled; switches plant EMS work mode to remote EMS
@@ -545,6 +758,18 @@ devices:
             storage_type: U16
             value_type: { primitive: UINT32 }
             mapping: { space: HOLDING_REGISTER, offset: 29, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: independent_phase_control_enable
+            name: Independent Phase Power Control Enable
+            description: Enable independent per-phase power control - 0 disabled, 1 enabled (output type L1/L2/L3/N only)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 30, length_words: 1, byte_order: BIG_ENDIAN }
             write:
               behavior: DIRECT
               constraints:
@@ -597,3 +822,837 @@ devices:
             unit: kW
             write:
               behavior: DIRECT
+
+      # --- 5.3 Hybrid inverter running info: nameplate, energy, battery ----
+      #        (read-only, per-inverter slave address)
+      - block_id: inverter_info
+        name: Hybrid Inverter Information (read-only)
+        space: INPUT_REGISTER
+        start_offset: 500
+        length_words: 109
+        points:
+          - point_id: model_type
+            name: Model Type
+            description: Inverter model string
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 500, length_words: 15, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: serial_number
+            name: Serial Number
+            description: Inverter serial number string
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 515, length_words: 10, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: firmware_version
+            name: Machine Firmware Version
+            description: Inverter firmware version string
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 525, length_words: 15, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: rated_active_power
+            name: Rated Active Power
+            description: Inverter rated active power
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 540, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+
+          - point_id: max_apparent_power_inv
+            name: Inverter Max Apparent Power
+            description: Inverter maximum apparent power
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 542, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kVA
+
+          - point_id: max_active_power_inv
+            name: Inverter Max Active Power
+            description: Inverter maximum active power (feed to the AC terminal)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 544, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+
+          - point_id: max_absorption_power_inv
+            name: Inverter Max Absorption Power
+            description: Inverter maximum absorption power (absorb from the AC terminal)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 546, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+
+          - point_id: rated_battery_capacity
+            name: Rated Battery Capacity
+            description: Inverter rated battery energy capacity
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 548, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+
+          - point_id: rated_ess_charge_power_inv
+            name: Inverter Rated Charge Power
+            description: Inverter rated ESS charge power
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 550, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+
+          - point_id: rated_ess_discharge_power_inv
+            name: Inverter Rated Discharge Power
+            description: Inverter rated ESS discharge power
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 552, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+
+          - point_id: energy_export_daily
+            name: Daily Export Energy
+            description: Energy exported to grid today
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 554, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: DAILY }
+
+          - point_id: energy_export_total
+            name: Accumulated Export Energy
+            description: Lifetime energy exported to grid
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 556, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME }
+
+          - point_id: energy_import_daily
+            name: Daily Import Energy
+            description: Energy imported from grid today
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 560, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: DAILY }
+
+          - point_id: energy_import_total
+            name: Accumulated Import Energy
+            description: Lifetime energy imported from grid
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 562, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME }
+
+          - point_id: battery_charge_energy_daily
+            name: Battery Daily Charge Energy
+            description: Energy charged into the battery today
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 566, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: CHARGE, accumulation: DAILY }
+
+          - point_id: battery_charge_energy_total
+            name: Battery Accumulated Charge Energy
+            description: Lifetime energy charged into the battery
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 568, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: CHARGE, accumulation: LIFETIME }
+
+          - point_id: battery_discharge_energy_daily
+            name: Battery Daily Discharge Energy
+            description: Energy discharged from the battery today
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 572, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: DISCHARGE, accumulation: DAILY }
+
+          - point_id: battery_discharge_energy_total
+            name: Battery Accumulated Discharge Energy
+            description: Lifetime energy discharged from the battery
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 574, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: DISCHARGE, accumulation: LIFETIME }
+
+          - point_id: inverter_running_state
+            name: Inverter Running State
+            description: Inverter operating state (see protocol appendix 1)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 578, length_words: 1, byte_order: BIG_ENDIAN }
+            measurand: { base_quantity: device_status }
+
+          - point_id: max_active_power_adjust
+            name: Max Active Power Adjustment Value
+            description: Current maximum active-power adjustment value
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 579, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+
+          - point_id: min_active_power_adjust
+            name: Min Active Power Adjustment Value
+            description: Current minimum active-power adjustment value
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 581, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+
+          - point_id: max_reactive_power_adjust_fed
+            name: Max Reactive Power Adjustment (Fed)
+            description: Maximum reactive-power adjustment fed to the AC terminal
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 583, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+
+          - point_id: max_reactive_power_adjust_absorbed
+            name: Max Reactive Power Adjustment (Absorbed)
+            description: Maximum reactive-power adjustment absorbed from the AC terminal
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 585, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+
+          - point_id: inverter_active_power
+            name: Inverter Active Power
+            description: Inverter total active power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 587, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: inverter_reactive_power
+            name: Inverter Reactive Power
+            description: Inverter total reactive power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 589, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL }
+
+          - point_id: ess_max_battery_charge_power
+            name: ESS Max Battery Charge Power
+            description: Maximum battery charge power for this inverter
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 591, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: charge_limit }
+
+          - point_id: ess_max_battery_discharge_power
+            name: ESS Max Battery Discharge Power
+            description: Maximum battery discharge power for this inverter
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 593, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: discharge_limit }
+
+          - point_id: ess_available_charge_energy
+            name: ESS Available Charge Energy
+            description: Battery energy that can still be charged
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 595, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+
+          - point_id: ess_available_discharge_energy
+            name: ESS Available Discharge Energy
+            description: Battery energy that can still be discharged
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 597, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+
+          - point_id: inverter_ess_power
+            name: Battery Charge/Discharge Power
+            description: Battery power for this inverter, >0 charging, <0 discharging
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 599, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: battery_power }
+
+          - point_id: battery_soc
+            name: Battery SOC
+            description: Battery state of charge for this inverter
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 601, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: "%"
+            measurand: { base_quantity: state_of_charge, location: BATTERY }
+
+          - point_id: battery_soh
+            name: Battery SOH
+            description: Battery state of health for this inverter
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 602, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: "%"
+            measurand: { base_quantity: state_of_health, location: BATTERY }
+
+          - point_id: battery_cell_temperature
+            name: Battery Average Cell Temperature
+            description: Average battery cell temperature
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 603, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: degC
+            measurand: { base_quantity: temperature, location: BATTERY }
+
+          - point_id: battery_cell_voltage
+            name: Battery Average Cell Voltage
+            description: Average battery cell voltage
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 604, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: V
+            measurand: { base_quantity: battery_voltage }
+
+          - point_id: inverter_alarm1
+            name: Inverter Alarm 1
+            description: Inverter alarm bitfield 1 (see protocol appendix 2)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 605, length_words: 1, byte_order: BIG_ENDIAN }
+            measurand: { base_quantity: alarm_status }
+
+          - point_id: inverter_alarm2
+            name: Inverter Alarm 2
+            description: Inverter alarm bitfield 2 (see protocol appendix 3)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 606, length_words: 1, byte_order: BIG_ENDIAN }
+            measurand: { base_quantity: alarm_status }
+
+          - point_id: inverter_alarm3
+            name: Inverter Alarm 3
+            description: Inverter alarm bitfield 3 (see protocol appendix 4)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 607, length_words: 1, byte_order: BIG_ENDIAN }
+            measurand: { base_quantity: alarm_status }
+
+          - point_id: inverter_alarm4
+            name: Inverter Alarm 4
+            description: Inverter alarm bitfield 4 (see protocol appendix 5)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 608, length_words: 1, byte_order: BIG_ENDIAN }
+            measurand: { base_quantity: alarm_status }
+
+      # --- 5.3 Hybrid inverter running info: AC measurements + PV strings --
+      #        (read-only, per-inverter slave address)
+      - block_id: inverter_ac
+        name: Hybrid Inverter AC & PV Measurements (read-only)
+        space: INPUT_REGISTER
+        start_offset: 1000
+        length_words: 42
+        points:
+          - point_id: rated_grid_voltage
+            name: Rated Grid Voltage
+            description: Inverter rated grid voltage
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1000, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+
+          - point_id: rated_grid_frequency
+            name: Rated Grid Frequency
+            description: Inverter rated grid frequency
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1001, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: Hz
+
+          - point_id: grid_frequency
+            name: Grid Frequency
+            description: Measured grid frequency
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1002, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+
+          - point_id: internal_temperature
+            name: PCS Internal Temperature
+            description: Power conversion system internal temperature
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1003, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: degC
+            measurand: { base_quantity: inverter_temperature, location: INTERNAL }
+
+          - point_id: output_type
+            name: Output Type
+            description: AC output wiring type - 0 L/N, 1 L1/L2/L3, 2 L1/L2/L3/N, 3 L1/L2/N
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 1004, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: line_voltage_l1_l2
+            name: A-B Line Voltage
+            description: Line-to-line voltage A-B; invalid when output type is L/N or L1/L2/N
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1005, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_L2 }
+
+          - point_id: line_voltage_l2_l3
+            name: B-C Line Voltage
+            description: Line-to-line voltage B-C; invalid when output type is L/N or L1/L2/N
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1007, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_L3 }
+
+          - point_id: line_voltage_l3_l1
+            name: C-A Line Voltage
+            description: Line-to-line voltage C-A; invalid when output type is L/N or L1/L2/N
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1009, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_L1 }
+
+          - point_id: voltage_l1
+            name: Phase A Voltage
+            description: Phase A voltage (phase voltage when output type is L/N)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1011, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+
+          - point_id: voltage_l2
+            name: Phase B Voltage
+            description: Phase B voltage; invalid when output type is L/N or L1/L2/N
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1013, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+
+          - point_id: voltage_l3
+            name: Phase C Voltage
+            description: Phase C voltage; invalid when output type is L/N or L1/L2/N
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1015, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+
+          - point_id: current_l1
+            name: Phase A Current
+            description: Phase A current (phase current when output type is L/N)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1017, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1 }
+
+          - point_id: current_l2
+            name: Phase B Current
+            description: Phase B current; invalid when output type is L/N or L1/L2/N
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1019, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+
+          - point_id: current_l3
+            name: Phase C Current
+            description: Phase C current; invalid when output type is L/N or L1/L2/N
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1021, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+
+          - point_id: power_factor
+            name: Power Factor
+            description: Inverter power factor
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1023, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, aggregation: TOTAL }
+
+          - point_id: pack_count
+            name: Battery Pack Count
+            description: Number of battery packs attached to this inverter
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 1024, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: pv_string_count
+            name: PV String Count
+            description: Number of PV strings
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 1025, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: mppt_count
+            name: MPPT Count
+            description: Number of MPPT trackers
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 1026, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: pv1_voltage
+            name: PV1 Voltage
+            description: PV string 1 voltage
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1027, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: pv_voltage }
+
+          - point_id: pv1_current
+            name: PV1 Current
+            description: PV string 1 current
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1028, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: A
+            measurand: { base_quantity: pv_current }
+
+          - point_id: pv2_voltage
+            name: PV2 Voltage
+            description: PV string 2 voltage
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1029, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: pv_voltage }
+
+          - point_id: pv2_current
+            name: PV2 Current
+            description: PV string 2 current
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1030, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: A
+            measurand: { base_quantity: pv_current }
+
+          - point_id: pv3_voltage
+            name: PV3 Voltage
+            description: PV string 3 voltage
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1031, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: pv_voltage }
+
+          - point_id: pv3_current
+            name: PV3 Current
+            description: PV string 3 current
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1032, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: A
+            measurand: { base_quantity: pv_current }
+
+          - point_id: pv4_voltage
+            name: PV4 Voltage
+            description: PV string 4 voltage
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1033, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: pv_voltage }
+
+          - point_id: pv4_current
+            name: PV4 Current
+            description: PV string 4 current
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1034, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: A
+            measurand: { base_quantity: pv_current }
+
+          - point_id: inverter_pv_power
+            name: Inverter PV Power
+            description: Total PV power for this inverter
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1035, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: pv_power }
+
+          - point_id: insulation_resistance
+            name: Insulation Resistance
+            description: PV array insulation resistance to ground (vendor reports raw/1000 in megaohms; scaled here to ohms)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1037, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1000, denominator: 1 } }
+            unit: Ohm
+
+          - point_id: startup_time
+            name: Startup Time
+            description: Most recent startup time, epoch seconds
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 1038, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+
+          - point_id: shutdown_time
+            name: Shutdown Time
+            description: Most recent shutdown time, epoch seconds
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 1040, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+
+      # --- 5.3 Hybrid inverter running info: integrated DC charger ---------
+      #        (read-only, per-inverter slave address; DC EV charger option)
+      - block_id: dc_charger
+        name: DC Charger (read-only)
+        space: INPUT_REGISTER
+        start_offset: 1500
+        length_words: 9
+        points:
+          - point_id: dc_vehicle_battery_voltage
+            name: DC Charger Vehicle Battery Voltage
+            description: Connected vehicle battery voltage
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1500, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, location: EV }
+
+          - point_id: dc_charging_current
+            name: DC Charger Charging Current
+            description: DC charging current
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1501, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: A
+            measurand: { base_quantity: current, location: EV }
+
+          - point_id: dc_output_power
+            name: DC Charger Output Power
+            description: DC charger output power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1502, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, location: EV }
+
+          - point_id: dc_vehicle_soc
+            name: DC Charger Vehicle SOC
+            description: Connected vehicle state of charge
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1504, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: "%"
+            measurand: { base_quantity: state_of_charge, location: EV }
+
+          - point_id: dc_charging_capacity
+            name: DC Charger Session Energy
+            description: Energy delivered in the current charging session
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1505, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: CHARGE, accumulation: SESSION, location: EV }
+
+          - point_id: dc_charging_duration
+            name: DC Charger Session Duration
+            description: Elapsed time in the current charging session
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 1507, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+
+      # --- 5.4 Hybrid inverter parameter setting (holding) ----------------
+      #        (per-inverter slave address)
+      - block_id: inverter_control
+        name: Hybrid Inverter Control (holding registers)
+        space: HOLDING_REGISTER
+        start_offset: 500
+        length_words: 2
+        points:
+          - point_id: inverter_start_stop
+            name: Inverter Start/Stop
+            description: Inverter start/stop command - 0 stop, 1 start
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 500, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: grid_code
+            name: Grid Code
+            description: Inverter grid-code selector
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 501, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+
+      # --- 5.4 DC charger control (holding, per-inverter slave address) ----
+      - block_id: dc_charger_control
+        name: DC Charger Control (holding registers)
+        space: HOLDING_REGISTER
+        start_offset: 1000
+        length_words: 1
+        points:
+          - point_id: dc_charger_start_stop
+            name: DC Charger Start/Stop
+            description: DC charger command - 0 start, 1 stop (note the vendor's reversed encoding)
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1000, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]

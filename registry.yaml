@@ -118,6 +118,30 @@ devices:
   - energy_active
   - fault_code
   - device_status
+- vendor: Phoenix Contact
+  model: CHARX SEC (charging controller)
+  category: ev-charger
+  doc_id: phoenixcontact.charx-sec
+  profile: ev-charger/phoenix-contact-charx-sec/phoenix-contact-charx-sec.moddef.yaml
+  transports:
+  - MODBUS_TCP
+  points: 80
+  status: vendor-confirmed
+  source: Phoenix Contact CHARX SEC user manual UM EN CHARX SEC (109999_en_08), appendix B3 Modbus register
+    overview — installation-wide registers (table B-7, address 0-999) and charging-point registers
+    (table B-8, address x000-x999; charging point 1 modeled)
+  source_url: https://www.phoenixcontact.com/en-pc/products/charging-controller-charx-sec-3100-1139012
+  measurands:
+  - active_power
+  - reactive_power
+  - apparent_power
+  - current
+  - voltage
+  - energy_active
+  - energy_reactive
+  - energy_apparent
+  - state_of_charge
+  - fault_code
 - vendor: Daikin
   model: Altherma 3 (air-to-water)
   category: hvac
@@ -156,6 +180,68 @@ devices:
   - energy_active
   - energy_apparent
   - energy_reactive
+- vendor: Inepro Metering
+  model: PRO380 (three-phase)
+  category: energy-meter
+  doc_id: inepro.pro380
+  profile: energy-meter/inepro-pro380/inepro-pro380.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 74
+  status: vendor-confirmed
+  source: Inepro PRO380 Modbus registers V1.18 (2016-06-22) — identification/configuration,
+    instantaneous measurements, and the full active/reactive energy block (total, tariff, per-phase,
+    forward/reverse)
+  source_url: https://www.promac.com.pl/wp-content/uploads/2018/01/PRO380-Modbus-registers-V1.18.pdf
+  measurands:
+  - voltage
+  - current
+  - frequency
+  - active_power
+  - reactive_power
+  - apparent_power
+  - power_factor
+  - energy_active
+  - energy_reactive
+- vendor: Bauer
+  model: BSM (signing meter)
+  category: energy-meter
+  doc_id: bauer.bsm
+  profile: energy-meter/bauer-bsm/bauer-bsm.moddef.yaml
+  transports:
+  - MODBUS_TCP
+  - MODBUS_RTU
+  points: 55
+  status: vendor-confirmed
+  source: Bauer BSM product manual 210910_Product_manual_BSM_EN (2021-09-10), appendix A — SunSpec
+    Common (1), AC Meter (203), and the scalar fields of the custom Signing Meter (64900); binary
+    signature/OCMF snapshot models omitted
+  source_url: https://www.bzr-bauer.de/wordpress/wp-content/uploads/2021/10/210910_Product_manual_BSM_EN.pdf
+  measurands:
+  - voltage
+  - current
+  - frequency
+  - active_power
+  - reactive_power
+  - apparent_power
+  - energy_active
+  - alarm_status
+- vendor: Iskra
+  model: WM3M4 (MID EV meter)
+  category: energy-meter
+  doc_id: iskra.wm3m4
+  profile: energy-meter/iskra-wm3m4/iskra-wm3m4.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 39
+  status: vendor-confirmed
+  source: Iskra WM3M4/WM3M4C User's Manual Ver 2.13 (doc 22433950) — identification, power-quality
+    metrics, tariff, and the EV charging-process billing block; instantaneous V/I/P (T5/T6/T7
+    embedded-exponent format) and the mantissa/exponent energy totals are not expressible in ModDef v0.4
+  source_url: https://www.iskra.eu/f/docs/Smart-energy-meters/K_WM3M4_EN_22433950_Users_manual_Ver_2.13.pdf
+  measurands:
+  - energy_active
+  - temperature
 - vendor: Carlo Gavazzi
   model: EM24-DIN
   category: energy-meter
@@ -254,20 +340,31 @@ devices:
   transports:
   - MODBUS_TCP
   - MODBUS_RTU
-  points: 51
+  points: 144
   status: vendor-confirmed
-  source: Sigenergy Modbus Protocol v1.7 (2024-04-09), plant running information + hybrid inverter
-    information + plant power-control holding registers
+  source: Sigenergy Modbus Protocol v1.7 (2024-04-09), full coverage of all four register tables —
+    plant running information (5.1), plant parameter setting (5.2), hybrid inverter running information
+    (5.3, incl. battery, AC/PV measurements and integrated DC charger), and hybrid inverter parameter
+    setting (5.4)
   source_url: https://www.sigenergy.com/
   measurands:
   - active_power
   - reactive_power
   - pv_power
+  - pv_voltage
+  - pv_current
   - battery_power
+  - battery_voltage
+  - voltage
+  - current
+  - frequency
   - state_of_charge
+  - state_of_health
   - charge_limit
   - discharge_limit
   - energy_active
   - power_factor
+  - temperature
+  - inverter_temperature
   - device_status
   - alarm_status

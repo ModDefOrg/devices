@@ -1,0 +1,610 @@
+# Source: Bauer BSM (Bauer Smart Meter) product manual, 210910_Product_manual_BSM_EN
+# (2021-09-10), appendix A "Overview Modbus registers".
+# https://www.bzr-bauer.de/wordpress/wp-content/uploads/2021/10/210910_Product_manual_BSM_EN.pdf
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# The BSM is a SunSpec-compliant, signing (eichrechtskonform) three-phase energy
+# meter for EV charging, built around standard and custom SunSpec models.
+#
+# Encoding notes (from the vendor manual, appendix A):
+#   - Modbus/TCP or RTU, holding registers, read with FC 0x03 (and 0x04);
+#     a few points are writable with FC 0x06 / 0x10. All values are big-endian
+#     (byte_order BIG_ENDIAN, word_order WORD_BIG_ENDIAN), the SunSpec default.
+#   - The manual lists the SunSpec *data-model* address (1-based, base 40001).
+#     The on-the-wire (0-based) ModDef offset = documented address - 1
+#     (e.g. data-model 40093 -> offset 40092).
+#   - Standard SunSpec scale factors (`sunssf`): the engineering value of an
+#     int16 measurement is raw * 10^SF, encoded here as
+#     transform.scale_ref { point_id: <..>_sf, mode: POW10 }.
+#   - int16 measurements use the SunSpec "not implemented" sentinel 0x8000
+#     (-32768); acc32 energy uses 0.
+#   - Coverage: the Common model (1, identification), the AC Meter model (203,
+#     the full three-phase electrical measurement set), and the scalar fields of
+#     the custom Signing Meter model (64900: meter/module identity, real energy
+#     since turn-on, counters, time, digital I/O). The binary signature/OCMF
+#     snapshot models (64901/64902/64903) are containers for signed blobs rather
+#     than telemetry and are intentionally not modeled as points.
+
+doc_id: bauer.bsm
+name: Bauer BSM Signing Energy Meter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+devices:
+  - device_id: bauer-bsm
+    vendor: Bauer
+    model: BSM
+    supported_transports:
+      - MODBUS_TCP
+      - MODBUS_RTU
+    blocks:
+      # --- SunSpec Common model (1): identification -----------------------
+      - block_id: common
+        name: SunSpec Common (identification)
+        space: HOLDING_REGISTER
+        start_offset: 40004
+        length_words: 65
+        points:
+          - point_id: manufacturer
+            name: Manufacturer
+            description: SunSpec Common Mn - manufacturer
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40004, length_words: 16, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: model
+            name: Model
+            description: SunSpec Common Md - model
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40020, length_words: 16, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: options
+            name: Options
+            description: SunSpec Common Opt - options
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40036, length_words: 8, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: version
+            name: Version
+            description: SunSpec Common Vr - firmware version
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40044, length_words: 8, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: serial_number
+            name: Serial Number
+            description: SunSpec Common SN - serial number
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40052, length_words: 16, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: device_address
+            name: Device Address
+            description: SunSpec Common DA - Modbus device address (default 42)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40068, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+
+      # --- SunSpec AC Meter model (203): electrical measurements -----------
+      - block_id: ac_meter
+        name: SunSpec AC Meter (model 203)
+        space: HOLDING_REGISTER
+        start_offset: 40092
+        length_words: 105
+        points:
+          - point_id: amps_sf
+            name: Amps Scale Factor
+            description: sunssf scale factor for all current points (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40096, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: amps_total
+            name: Total Current
+            description: Total AC current (A)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40092, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: amps_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: current, aggregation: TOTAL }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: amps_l1
+            name: Current L1
+            description: Phase A current (AphA)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40093, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: amps_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: amps_l2
+            name: Current L2
+            description: Phase B current (AphB)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40094, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: amps_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: amps_l3
+            name: Current L3
+            description: Phase C current (AphC)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40095, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: amps_sf, mode: POW10 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: voltage_sf
+            name: Voltage Scale Factor
+            description: sunssf scale factor for all voltage points (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40105, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: voltage_l1
+            name: Voltage L1-N
+            description: Phase voltage A-N (PhVphA)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40098, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: voltage_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: voltage_l2
+            name: Voltage L2-N
+            description: Phase voltage B-N (PhVphB)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40099, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: voltage_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: voltage_l3
+            name: Voltage L3-N
+            description: Phase voltage C-N (PhVphC)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40100, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: voltage_sf, mode: POW10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: frequency_sf
+            name: Frequency Scale Factor
+            description: sunssf scale factor for frequency (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40107, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: frequency
+            name: Frequency
+            description: Grid frequency (Hz)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40106, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: frequency_sf, mode: POW10 } }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: power_sf
+            name: Active Power Scale Factor
+            description: sunssf scale factor for active power (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40112, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: power_total
+            name: Total Active Power
+            description: Total active power (W)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40108, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: power_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: power_l1
+            name: Active Power L1
+            description: Phase A active power (WphA)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40109, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: power_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: power_l2
+            name: Active Power L2
+            description: Phase B active power (WphB)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40110, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: power_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: power_l3
+            name: Active Power L3
+            description: Phase C active power (WphC)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40111, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: power_sf, mode: POW10 } }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: va_sf
+            name: Apparent Power Scale Factor
+            description: sunssf scale factor for apparent power (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40117, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: va_total
+            name: Total Apparent Power
+            description: Total apparent power (VA)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40113, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: va_sf, mode: POW10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: va_l1
+            name: Apparent Power L1
+            description: Phase A apparent power (VAphA)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40114, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: va_sf, mode: POW10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L1 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: va_l2
+            name: Apparent Power L2
+            description: Phase B apparent power (VAphB)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40115, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: va_sf, mode: POW10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L2 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: va_l3
+            name: Apparent Power L3
+            description: Phase C apparent power (VAphC)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40116, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: va_sf, mode: POW10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L3 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: var_sf
+            name: Reactive Power Scale Factor
+            description: sunssf scale factor for reactive power (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40122, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: var_total
+            name: Total Reactive Power
+            description: Total reactive power (var)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40118, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: var_sf, mode: POW10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: var_l1
+            name: Reactive Power L1
+            description: Phase A reactive power (VARphA)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40119, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: var_sf, mode: POW10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L1 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: var_l2
+            name: Reactive Power L2
+            description: Phase B reactive power (VARphB)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40120, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: var_sf, mode: POW10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L2 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: var_l3
+            name: Reactive Power L3
+            description: Phase C reactive power (VARphC)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40121, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: var_sf, mode: POW10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L3 }
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: power_factor_sf
+            name: Power Factor Scale Factor
+            description: sunssf scale factor for power factor (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40127, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: power_factor_l1
+            name: Power Factor L1
+            description: Phase A power factor in percent (PFphA)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40124, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: power_factor_sf, mode: POW10 } }
+            unit: "%"
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: power_factor_l2
+            name: Power Factor L2
+            description: Phase B power factor in percent (PFphB)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40125, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: power_factor_sf, mode: POW10 } }
+            unit: "%"
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: power_factor_l3
+            name: Power Factor L3
+            description: Phase C power factor in percent (PFphC)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40126, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale_ref: { point_id: power_factor_sf, mode: POW10 } }
+            unit: "%"
+            na_values: [{ raw: -32768, meaning: not_implemented }]
+
+          - point_id: total_wh_sf
+            name: Total Watt-hours Scale Factor
+            description: sunssf scale factor for imported energy (value = raw * 10^sf)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40144, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: total_wh_imported
+            name: Total Imported Active Energy
+            description: Total imported real energy (TotWhImp)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40136, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale_ref: { point_id: total_wh_sf, mode: POW10 } }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME }
+
+          - point_id: events
+            name: Events
+            description: Critical event flags of the counter and communication module (non-zero indicates a problem)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40195, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            measurand: { base_quantity: alarm_status }
+
+      # --- Custom Signing Meter model (64900): scalar fields --------------
+      - block_id: signing_meter
+        name: Signing Meter (model 64900, scalar fields)
+        space: HOLDING_REGISTER
+        start_offset: 40199
+        length_words: 70
+        points:
+          - point_id: error_code_meter
+            name: Error Code Meter
+            description: Meter error code, mirrored into a bit of the AC-meter Evt field
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40199, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: serial_number_meter
+            name: Serial Number Meter
+            description: Serial number of the metering core
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40203, length_words: 8, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: serial_number_comm
+            name: Serial Number Communication Module
+            description: Serial number of the communication module
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40211, length_words: 8, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: software_version_meter
+            name: Software Version Meter
+            description: Metering core firmware version
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40219, length_words: 8, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: software_version_comm
+            name: Software Version Communication Module
+            description: Communication module firmware version
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40227, length_words: 8, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: meter_address_1
+            name: Meter Address 1
+            description: Meter address line 1
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40235, length_words: 8, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: meter_address_2
+            name: Meter Address 2
+            description: Meter address line 2
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40243, length_words: 8, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: real_energy_since_turn_on_sf
+            name: Real Energy Since Turn-On Scale Factor
+            description: sunssf scale factor for real energy imported since last turn-on
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40253, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: real_energy_since_turn_on
+            name: Real Energy Imported Since Turn-On
+            description: Imported real energy since the last turn-on sequence (RCR)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40251, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale_ref: { point_id: real_energy_since_turn_on_sf, mode: POW10 } }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: SESSION }
+
+          - point_id: power_down_counter
+            name: Power Down Counter
+            description: Number of power-down events
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40254, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: response_counter
+            name: Response Counter
+            description: Number of snapshots signed by this device so far
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40256, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: operation_seconds
+            name: Operation-Seconds Counter
+            description: Operating seconds of this device
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40258, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+
+          - point_id: epoch_time
+            name: Current Epoch Time
+            description: Unix epoch time, seconds since 1970-01-01 00:00
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40260, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: timezone_offset
+            name: Timezone Offset
+            description: Timezone offset from UTC
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40262, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: min
+            write:
+              behavior: DIRECT
+
+          - point_id: digital_input_state
+            name: Digital Input State
+            description: Digital input state; least-significant bit holds the input state
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40267, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: digital_output_state
+            name: Digital Output State
+            description: Digital output state; writing the least-significant bit switches the output
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40268, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT

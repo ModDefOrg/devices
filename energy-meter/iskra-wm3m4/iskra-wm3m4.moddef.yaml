@@ -1,0 +1,430 @@
+# Source: Iskra WM3M4 / WM3M4C User's Manual, Ver 2.13 (document 22433950).
+# https://www.iskra.eu/f/docs/Smart-energy-meters/K_WM3M4_EN_22433950_Users_manual_Ver_2.13.pdf
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# The WM3M4(C) is an MID / eichrecht three-phase energy meter used in EV charging
+# (signed measurements, cable-loss compensation, per-charging-process counters).
+#
+# Encoding notes (from the vendor manual, appendix "Modbus tables"):
+#   - Modbus RTU over RS485. Read-only measurement/counter data lives in the Input
+#     Register range 3xxxx (FC 0x04); settings/commands/EV counters live in the
+#     Holding Register range 4xxxx (FC 0x03 / 0x06 / 0x10). Addresses are 0-based
+#     within each range, so the ModDef offset = address - 30000 (input) or
+#     address - 40000 (holding). Big-endian, MSW first.
+#   - Iskra data types: T1 = u16, T2 = s16, T3 = s32, T3u/T_32U = u32,
+#     T16 = u16 with 2 decimals (value = raw/100), T17 = s16 with 2 decimals,
+#     T_StrN = ASCII text (2 chars per register).
+#   - LIMITATIONS (values omitted because ModDef v0.4 can't express them):
+#       * The instantaneous measurements (voltage, current, active/reactive/
+#         apparent power, power factor, frequency at 30105..30190) use Iskra's
+#         T5/T6/T7 format, which embeds a per-reading signed decade exponent in
+#         the high byte of the same 32-bit word (value = mantissa(24-bit) *
+#         10^exponent(8-bit)). There is no transform for an exponent carried
+#         inside the value word, so these points cannot be represented.
+#       * The non-reset energy total counters (30418..30425) store the value as a
+#         T3 mantissa with a separate T2 decade exponent, but the mantissas and
+#         exponents are pooled in interleaved register ranges (30414..30417 and
+#         30418..30425); the overlapping windows can't be modeled as separate
+#         composed points. The EV-charging billing counters below carry the exact
+#         per-session energy instead.
+#   - Coverage: device identification, power-quality metrics (internal
+#     temperature, voltage/current THD), active tariff, and the EV charging-
+#     process billing block (consumption, cable loss/resistance, and the
+#     start/stop/tariff/intermediate/fiscal/hold/suspend counter snapshots).
+
+doc_id: iskra.wm3m4
+name: Iskra WM3M4 Three-Phase Energy Meter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+devices:
+  - device_id: iskra-wm3m4
+    vendor: Iskra
+    model: WM3M4
+    supported_transports:
+      - MODBUS_RTU
+    blocks:
+      # --- Identification (input registers, 30000..30081) -----------------
+      - block_id: identification
+        name: Device Identification (input registers)
+        space: INPUT_REGISTER
+        start_offset: 0
+        length_words: 82
+        points:
+          - point_id: device_group
+            name: Device Group
+            description: Device group code (4 = WM family)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 0, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: model_number
+            name: Model Number
+            description: Model designation (e.g. WM3M4C), ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 1, length_words: 8, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: serial_number
+            name: Serial Number
+            description: Meter serial number, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 9, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: software_reference
+            name: Software Reference
+            description: Firmware reference (100 = 1.00)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 13, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: hardware_reference
+            name: Hardware Reference
+            description: Hardware revision letter, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 14, length_words: 1, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: accuracy_class
+            name: Accuracy Class
+            description: Meter accuracy class (100 = class 1.0)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 19, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+
+          - point_id: com1_type
+            name: COM1 Communication Type
+            description: COM1 physical layer (2 = RS485)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 24, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: mid_lock_status
+            name: MID Lock Status
+            description: Metrological lock status (0 unlocked, non-zero locked)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 76, length_words: 1, byte_order: BIG_ENDIAN }
+
+      # --- Status & tariff (input registers) ------------------------------
+      - block_id: status
+        name: Status & Tariff (input registers)
+        space: INPUT_REGISTER
+        start_offset: 101
+        length_words: 305
+        points:
+          - point_id: phase_valid
+            name: Phase Valid Measurement
+            description: Per-phase measurement validity bitfield (bit 0 = phase 1 invalid, ...)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 101, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: current_active_tariff
+            name: Current Active Tariff
+            description: Currently active tariff number
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 405, length_words: 1, byte_order: BIG_ENDIAN }
+
+      # --- Power quality (input registers, 30181..30190) ------------------
+      - block_id: power_quality
+        name: Power Quality (input registers)
+        space: INPUT_REGISTER
+        start_offset: 181
+        length_words: 10
+        points:
+          - point_id: internal_temperature
+            name: Internal Temperature
+            description: Meter internal temperature
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 181, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: degC
+            measurand: { base_quantity: temperature, location: INTERNAL }
+
+          - point_id: voltage_thd_l1
+            name: Voltage THD L1
+            description: Total harmonic distortion, voltage phase 1
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 182, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: voltage_thd_l2
+            name: Voltage THD L2
+            description: Total harmonic distortion, voltage phase 2
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 183, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: voltage_thd_l3
+            name: Voltage THD L3
+            description: Total harmonic distortion, voltage phase 3
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 184, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: current_thd_l1
+            name: Current THD L1
+            description: Total harmonic distortion, current phase 1
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 188, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: current_thd_l2
+            name: Current THD L2
+            description: Total harmonic distortion, current phase 2
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 189, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+          - point_id: current_thd_l3
+            name: Current THD L3
+            description: Total harmonic distortion, current phase 3
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 190, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: "%"
+
+      # --- EV charging-process billing block (holding registers) ----------
+      # The meter's non-reset energy total counters (30418..30425) store the
+      # value split across pooled mantissa (T3) and decade-exponent (T2)
+      # registers; the interleaved layout can't be modeled as separate composed
+      # points, so the exact per-session energy below is used instead.
+      - block_id: ev_charging
+        name: EV Charging Process (holding registers)
+        space: HOLDING_REGISTER
+        start_offset: 6985
+        length_words: 64
+        points:
+          - point_id: cable_loss_export
+            name: Cable Loss (A-)
+            description: Accumulated cable-loss energy in the export (A-) direction
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 6985, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: consumption_export_with_cable_loss
+            name: Consumption (A-) + Cable Loss
+            description: Export active energy including cable loss
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 6987, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: SESSION }
+
+          - point_id: cable_loss_import
+            name: Cable Loss (A+)
+            description: Accumulated cable-loss energy in the import (A+) direction
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 6995, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: consumption_import_less_cable_loss
+            name: Consumption (A+) - Cable Loss
+            description: Import active energy with cable loss subtracted
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 6997, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: SESSION }
+
+          - point_id: cable_resistance
+            name: Cable Resistance During Charging
+            description: Cable resistance used for loss compensation (reported in hundredths of a milliohm)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 6999, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 100000 } }
+            unit: Ohm
+
+          - point_id: measurement_status
+            name: Measurement Status
+            description: Charging-process measurement state machine (0 = Idle)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7000, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: charging_duration
+            name: Charging Duration
+            description: Duration of the current charging process
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7001, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+
+          - point_id: consumption
+            name: Consumption
+            description: Import active energy consumed in the current charging process
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7003, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: SESSION }
+
+          - point_id: tariff_changes_count
+            name: Tariff Changes Count
+            description: Number of tariff changes during the charging process
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7009, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: intermediate_readings_count
+            name: Intermediate Readings Count
+            description: Number of intermediate readings during the charging process
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7010, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: fiscal_readings_count
+            name: Fiscal Readings Count
+            description: Number of fiscal readings during the charging process
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7011, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: signatures_count
+            name: Signatures Count
+            description: Number of digital signatures produced
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7013, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: start_counter_import
+            name: Start Counter Value (A+)
+            description: Import energy register snapshot at charging start
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7017, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: stop_counter_import
+            name: Stop Counter Value (A+)
+            description: Import energy register snapshot at charging stop
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7021, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: tariff_change_counter_import
+            name: Tariff Change Counter Value (A+)
+            description: Import energy register snapshot at the last tariff change
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7025, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: intermediate_reading_counter_import
+            name: Intermediate Reading Counter Value (A+)
+            description: Import energy register snapshot at the last intermediate reading
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7029, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: fiscal_reading_counter_import
+            name: Fiscal Reading Counter Value (A+)
+            description: Import energy register snapshot at the last fiscal reading
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7033, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: hold_counter_import
+            name: Hold Measurements Counter Value (A+)
+            description: Import energy register snapshot at the last hold event
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7037, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: suspend_counter_import
+            name: Suspend Counter Value (A+)
+            description: Import energy register snapshot at the last suspend event
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7041, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: start_counter_export
+            name: Start Counter 2 Value (A-)
+            description: Export energy register snapshot at charging start
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7043, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: stop_counter_export
+            name: Stop Counter 2 Value (A-)
+            description: Export energy register snapshot at charging stop
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7045, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: consumption_export
+            name: Consumption 2 (A-)
+            description: Export active energy in the current charging process
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7047, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: SESSION }

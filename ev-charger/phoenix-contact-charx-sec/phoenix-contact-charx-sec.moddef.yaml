@@ -1,0 +1,887 @@
+# Source: Phoenix Contact CHARX SEC user manual UM EN CHARX SEC (109999_en_08),
+# appendix B3 "Modbus communication and register overview" (tables B-6, B-7, B-8).
+# https://www.phoenixcontact.com/ (order no. 1139012, CHARX control modular)
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# The CHARX SEC is a modular AC charging controller (EV charging station).
+#
+# Encoding notes (from the vendor manual, appendix B):
+#   - Modbus/TCP server, default address 1, port 502. Object type: Holding, 16-bit.
+#     The holding register (FC 0x03) and input register (FC 0x04) tables return the
+#     same value, so every point is mapped to HOLDING_REGISTER here.
+#   - The documented "URL" column is the 0-based register address, taken as the
+#     ModDef offset directly. Multi-word values are most-significant word first
+#     (the manual gives e.g. X232 = MSW, X233 = LSW), i.e. WORD_BIG_ENDIAN.
+#   - Address range 0-999 holds installation-wide data (all charging controllers
+#     on the backplane bus and over Ethernet); modeled as the `installation` block.
+#   - Address range x000-x999 holds the data for one charging point, where x is the
+#     charging point number. This profile models charging point 1 (offsets 1100..1308);
+#     for further charging points add 1000 per point (point 2 -> 2100.., point 3 -> 3100..).
+#   - Power/current/voltage telemetry is reported in milli-units (mW, mVAR, mVA,
+#     mA, mV); transform.scale 1/1000 converts to the canonical W/var/VA/A/V.
+#     Energy counters are already in Wh/varh/VAh (no scaling).
+#   - Total current registers 158/160/162 return -1 when the phase rotation is
+#     unknown; encoded as an na_value sentinel.
+
+doc_id: phoenixcontact.charx-sec
+name: Phoenix Contact CHARX SEC Charging Controller
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  - type_id: charging_interface
+    name: Charging Interface
+    description: Configuration of the charging interface per IEC 61851-1 (register x100).
+    values:
+      - { value: 0, name: CHARGING_CASE_B_SOCKET }
+      - { value: 1, name: CHARGING_CASE_C_CONNECTOR }
+
+  - type_id: temperature_monitoring
+    name: Temperature Monitoring
+    description: Temperature monitoring mode (register x108).
+    values:
+      - { value: 0, name: INACTIVE }
+      - { value: 1, name: PT1000_SENSOR }
+      - { value: 2, name: PTC_SENSOR }
+
+  - type_id: overcurrent_monitoring
+    name: Overcurrent Monitoring
+    description: Overcurrent monitoring configuration (register x111).
+    values:
+      - { value: 0, name: INACTIVE }
+      - { value: 1, name: THRESHOLDS_120_10S_110_100S }
+      - { value: 2, name: EV_ZE_READY }
+
+  - type_id: release_mode
+    name: Charging Release Mode
+    description: Charging controller charging release mode (register x120).
+    values:
+      - { value: 0, name: DASHBOARD }
+      - { value: 1, name: LOCAL_WHITELIST }
+      - { value: 2, name: EXTERNAL_CONTROL }
+      - { value: 3, name: PERMANENT_CHARGING_RELEASE }
+      - { value: 4, name: OCPP }
+      - { value: 5, name: MODBUS }
+
+  - type_id: modem_registration_status
+    name: Modem Registration Status
+    description: Cellular modem registration status (register 145).
+    values:
+      - { value: 0, name: NOT_REGISTERED }
+      - { value: 1, name: REGISTERED }
+      - { value: 2, name: SEARCHING }
+      - { value: 3, name: REGISTRATION_DENIED }
+      - { value: 4, name: UNKNOWN }
+
+  - type_id: modem_signal_quality
+    name: Modem Signal Quality
+    description: Cellular modem signal quality (register 146).
+    values:
+      - { value: 0, name: UNKNOWN }
+      - { value: 1, name: INADEQUATE_TO_NONE }
+      - { value: 2, name: INADEQUATE }
+      - { value: 3, name: OK }
+      - { value: 4, name: GOOD }
+      - { value: 5, name: EXCELLENT }
+
+  - type_id: energy_meter_type
+    name: Energy Measuring Device Type
+    description: Configured energy meter model (register x112); reserved codes omitted.
+    values:
+      - { value: 0, name: NONE }
+      - { value: 1, name: PHOENIX_CONTACT_EEM_350_D_MCB }
+      - { value: 2, name: PHOENIX_CONTACT_EEM_EM357_DM357 }
+      - { value: 3, name: CARLO_GAVAZZI_EM24 }
+      - { value: 4, name: PHOENIX_CONTACT_EEM_EM357_EE }
+      - { value: 6, name: CARLO_GAVAZZI_EM340 }
+      - { value: 11, name: ISKRA_WM3M4 }
+      - { value: 12, name: INEPRO_METERING_PRO380 }
+      - { value: 65535, name: UNKNOWN }
+
+devices:
+  - device_id: phoenixcontact-charx-sec
+    vendor: Phoenix Contact
+    model: CHARX SEC
+    supported_transports:
+      - MODBUS_TCP
+    blocks:
+      # --- B-7 Installation-wide data (address range 0-999) ---------------
+      - block_id: installation
+        name: Installation Data (address range 0-999)
+        space: HOLDING_REGISTER
+        start_offset: 100
+        length_words: 68
+        points:
+          - point_id: device_designation
+            name: Device Designation
+            description: Charging station device designation, 20 ASCII characters
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 100, length_words: 10, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: software_version
+            name: Linux Software Version
+            description: Linux software version, 8 ASCII characters
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 110, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: controller_count
+            name: Charging Controller Count
+            description: Number of charging controllers in the system (backplane bus and Ethernet network)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 114, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: mac_address_eth0
+            name: MAC Address ETH0
+            description: ETH0 MAC address, 6 bytes
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 115, length_words: 3, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: mac_address_eth1
+            name: MAC Address ETH1
+            description: ETH1 MAC address, 6 bytes
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 118, length_words: 3, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: ip_address_eth0
+            name: IPv4 Address ETH0
+            description: ETH0 IPv4 address; four registers, one octet per register
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 121, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: ip_address_eth1
+            name: IPv4 Address ETH1
+            description: ETH1 IPv4 address; four registers, one octet per register
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 125, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: subnet_mask_eth0
+            name: Subnet Mask ETH0
+            description: ETH0 subnet mask; four registers, one octet per register
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 129, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: subnet_mask_eth1
+            name: Subnet Mask ETH1
+            description: ETH1 subnet mask; four registers, one octet per register
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 133, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: gateway_eth0
+            name: Gateway ETH0
+            description: ETH0 default gateway (placeholder, returns 0)
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 137, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: gateway_eth1
+            name: Gateway ETH1
+            description: ETH1 default gateway (placeholder, returns 0)
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 141, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: modem_registration_status
+            name: Modem Registration Status
+            description: Cellular modem registration status
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: modem_registration_status } }
+            mapping: { space: HOLDING_REGISTER, offset: 145, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: modem_signal_quality
+            name: Modem Signal Quality
+            description: Cellular modem signal quality
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: modem_signal_quality } }
+            mapping: { space: HOLDING_REGISTER, offset: 146, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: controllers_noncritical_error
+            name: Controllers In Non-Critical Error
+            description: Number of charging controllers in the non-critical error state
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 147, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: controllers_status_ef
+            name: Controllers In Status E/F
+            description: Number of charging controllers resulting in status E or F
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 148, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: charging_points_unoccupied
+            name: Unoccupied Charging Points
+            description: Number of charging controllers in status A / unoccupied charging points
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 149, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: charging_points_occupied
+            name: Occupied Charging Points
+            description: Number of charging controllers in status B, C, or D / occupied charging points
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 150, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: charging_points_active
+            name: Active Charging Processes
+            description: Number of charging controllers with an active charging process (C2)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 151, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: total_active_power
+            name: Total Active Power
+            description: Aggregated active power at the terminal point for the group of charging controllers
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 152, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: total_reactive_power
+            name: Total Reactive Power
+            description: Aggregated reactive power at the terminal point for the group of charging controllers
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 154, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL }
+
+          - point_id: total_apparent_power
+            name: Total Apparent Power
+            description: Aggregated apparent power at the terminal point for the group of charging controllers
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 156, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL }
+
+          - point_id: total_current_l1
+            name: Total Current L1
+            description: Aggregated current on phase L1 at the terminal point; -1 if phase rotation unknown
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 158, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1, aggregation: TOTAL }
+            na_values: [{ raw: -1, meaning: unknown_phase_rotation }]
+
+          - point_id: total_current_l2
+            name: Total Current L2
+            description: Aggregated current on phase L2 at the terminal point; -1 if phase rotation unknown
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 160, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2, aggregation: TOTAL }
+            na_values: [{ raw: -1, meaning: unknown_phase_rotation }]
+
+          - point_id: total_current_l3
+            name: Total Current L3
+            description: Aggregated current on phase L3 at the terminal point; -1 if phase rotation unknown
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 162, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3, aggregation: TOTAL }
+            na_values: [{ raw: -1, meaning: unknown_phase_rotation }]
+
+          - point_id: availability_control
+            name: Availability Control
+            description: Control availability of all assigned charging controllers - 0 set to status F, 1 normal operation
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 164, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: reset_controller
+            name: Reset
+            description: Write 1 to restart the charging controller (server only)
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 165, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [1]
+
+          - point_id: reset_system
+            name: System Reset
+            description: Write 1 to restart all charging controllers connected in the group
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 166, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [1]
+
+          - point_id: dynamic_max_charging_current
+            name: Dynamic Maximum Target Charging Current
+            description: Dynamic maximum target charging current for load management, referenced to the first load circuit
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 167, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+            write:
+              behavior: DIRECT
+
+      # --- B-8 Charging point data (address range x000-x999; point 1 shown) -
+      - block_id: charging_point_1
+        name: Charging Point 1 (address range 1000-1999)
+        space: HOLDING_REGISTER
+        start_offset: 1100
+        length_words: 209
+        points:
+          # ---- Configuration data (x100 - x199) ----
+          - point_id: charging_interface
+            name: Charging Interface
+            description: Configuration of the charging interface per IEC 61851-1
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: charging_interface } }
+            mapping: { space: HOLDING_REGISTER, offset: 1100, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: max_charging_current_config
+            name: Configured Maximum Charging Current
+            description: Set maximum charging current for the charging point
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1101, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: min_charging_current_config
+            name: Configured Minimum Charging Current
+            description: Set minimum charging current for the charging point
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1102, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: rcm_external_configured
+            name: External Residual Current Monitoring
+            description: Residual current monitoring via input RCM - 1 external RCM sensor configured, 0 none
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1103, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: derating_lower_temp
+            name: Derating Lower Temperature Threshold
+            description: Lower temperature threshold for starting derating mode (Pt 1000 sensor active)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1104, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: degC
+
+          - point_id: derating_upper_temp
+            name: Derating Upper Temperature Threshold
+            description: Upper temperature threshold for stopping derating mode (Pt 1000 sensor active)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1105, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: degC
+
+          - point_id: derating_start_current
+            name: Derating Start Charging Current
+            description: Charging current setting when derating mode is started
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1106, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: derating_stop_current
+            name: Derating Stop Charging Current
+            description: Charging current setting when derating mode is stopped
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1107, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: temperature_monitoring
+            name: Temperature Monitoring
+            description: Temperature monitoring mode
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: temperature_monitoring } }
+            mapping: { space: HOLDING_REGISTER, offset: 1108, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: accept_status_d
+            name: Accept Vehicles In Status D
+            description: Accept vehicles in status D - 0 blocked, 1 allow
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1109, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: proximity_evaluation_config
+            name: Proximity Evaluation Configuration
+            description: Configuration of proximity evaluation - 0 per IEC 61851-1
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1110, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: overcurrent_monitoring
+            name: Overcurrent Monitoring
+            description: Configuration of overcurrent monitoring
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: overcurrent_monitoring } }
+            mapping: { space: HOLDING_REGISTER, offset: 1111, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: energy_meter_type
+            name: Energy Measuring Device Type
+            description: Configured energy meter model
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: energy_meter_type } }
+            mapping: { space: HOLDING_REGISTER, offset: 1112, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: controller_uid
+            name: Charging Controller UID
+            description: UID of the charging controller, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 1113, length_words: 3, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: associated_uid
+            name: Associated Controller UID
+            description: UID of the associated client or server charging controller, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 1116, length_words: 3, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: backplane_position
+            name: Backplane Bus Position
+            description: Position of the charging controller in the backplane bus
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1119, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: release_mode
+            name: Charging Release Mode
+            description: Charging controller charging release mode
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: release_mode } }
+            mapping: { space: HOLDING_REGISTER, offset: 1120, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: rfid_reader_uid
+            name: RFID Reader UID
+            description: RFID reader UID of the charging controller (placeholder, returns 0)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 1121, length_words: 3, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          # ---- Status data (x200 - x299) ----
+          - point_id: voltage_l1
+            name: Voltage L1
+            description: Voltage of phase L1
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1232, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_N, location: EV }
+
+          - point_id: voltage_l2
+            name: Voltage L2
+            description: Voltage of phase L2
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1234, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N, location: EV }
+
+          - point_id: voltage_l3
+            name: Voltage L3
+            description: Voltage of phase L3
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1236, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N, location: EV }
+
+          - point_id: current_l1
+            name: Current L1
+            description: Current of phase L1
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1238, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1, location: EV }
+
+          - point_id: current_l2
+            name: Current L2
+            description: Current of phase L2
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1240, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2, location: EV }
+
+          - point_id: current_l3
+            name: Current L3
+            description: Current of phase L3
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1242, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3, location: EV }
+
+          - point_id: active_power
+            name: Active Power
+            description: Active power delivered at the charging point
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1244, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL, location: EV }
+
+          - point_id: reactive_power
+            name: Reactive Power
+            description: Reactive power at the charging point
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1246, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL, location: EV }
+
+          - point_id: apparent_power
+            name: Apparent Power
+            description: Apparent power at the charging point
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1248, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL, location: EV }
+
+          - point_id: energy_active_total
+            name: Active Energy Counter
+            description: Meter counter value for active energy
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: UINT64 }
+            mapping: { space: HOLDING_REGISTER, offset: 1250, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, accumulation: REGISTER, location: EV }
+
+          - point_id: energy_reactive_total
+            name: Reactive Energy Counter
+            description: Meter counter value for reactive energy
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: INT64 }
+            mapping: { space: HOLDING_REGISTER, offset: 1254, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: varh
+            measurand: { base_quantity: energy_reactive, accumulation: REGISTER, location: EV }
+
+          - point_id: energy_apparent_total
+            name: Apparent Energy Counter
+            description: Meter counter value for apparent energy
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: UINT64 }
+            mapping: { space: HOLDING_REGISTER, offset: 1258, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: VAh
+            measurand: { base_quantity: energy_apparent, accumulation: REGISTER, location: EV }
+
+          - point_id: soc_energy
+            name: State Of Charge (Energy)
+            description: SOC in kWh per ISO 15118-20 (placeholder, returns 0)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1262, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: soc_percent
+            name: State Of Charge
+            description: SOC in percent per ISO 15118-20 (placeholder, returns 0)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1264, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: "%"
+            measurand: { base_quantity: state_of_charge, location: EV }
+
+          - point_id: last_evcc_id
+            name: Last EVCC ID
+            description: Last EVCC ID seen at the charging point, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 1265, length_words: 10, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: last_rfid_uid
+            name: Last RFID UID
+            description: Last RFID UID seen at the charging point, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 1275, length_words: 10, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: connection_time
+            name: Connection Time
+            description: Time connected in status B/C/D
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1285, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+
+          - point_id: charging_duration
+            name: Total Charging Duration
+            description: Total charging duration in status C/D, reset by status change from B to A
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1287, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+
+          - point_id: session_energy_active
+            name: Session Active Energy
+            description: Transmitted active energy for the current charging process
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1289, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, accumulation: SESSION, location: EV }
+
+          - point_id: error_code
+            name: Error Code
+            description: Error bitfield, one bit per error (see manual "Error codes"); MSW at x293, LSW at x294
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1293, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            measurand: { base_quantity: fault_code }
+
+          - point_id: digital_inputs
+            name: Digital Inputs
+            description: Digital input states, one bit per input
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1295, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: pwm_duty_cycle
+            name: Charging Current Setting (PWM Duty Cycle)
+            description: Current charging current setting as PWM duty cycle per IEC 61851-1
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1296, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: "%"
+
+          - point_id: charging_current_setpoint
+            name: Charging Current Setting (Current)
+            description: Current charging current setting as current strength
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1297, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: connector_capacity
+            name: Connector Current Carrying Capacity
+            description: Current carrying capacity of the plugged-in charging connector per IEC 61851-1
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1298, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: vehicle_status
+            name: Vehicle Status
+            description: Vehicle status per IEC 61851-1 (A1, A2, B1, B2, C1, C2, E0, F0, IN), ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 1299, length_words: 1, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          # ---- Control registers (x300 - x399) ----
+          - point_id: charging_release
+            name: Charging Release
+            description: Charging release (must be configured to release via Modbus) - 0 not enabled, 1 enabled
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1300, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: max_charging_current
+            name: Maximum Charging Current
+            description: Maximum charging current settable by higher-level systems; charging release is withdrawn if exceeded or fallen below
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1301, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 6, denominator: 1 }
+                max_value: { numerator: 80, denominator: 1 }
+
+          - point_id: digital_outputs
+            name: Digital Outputs
+            description: State of the digital outputs, binary-coded 4 bits per output (0 undefined, 1 floating, 2 low, 3 flashing low, 4 pulsatile low, 5 high, 6 flashing high)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1302, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+
+          - point_id: locking
+            name: Connector Locking
+            description: Locking (must be configured to external control) - 0 unlocking, 1 locking
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1303, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: status_f_availability
+            name: Status F Availability
+            description: Availability (must be configured to release via Modbus) - 0 not available (status F), 1 available
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1304, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: enforce_unlocking
+            name: Enforce Unlocking
+            description: Enforce unlocking (if not configured to external control) - write 1 to perform unlocking
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1305, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+              constraints:
+                allowed_values: [0, 1]
+
+          - point_id: watchdog_max_charging_current
+            name: Watchdog Maximum Charging Current
+            description: Maximum charging current applied when the watchdog timer expires; charging release is withdrawn if exceeded or fallen below
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1306, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+            write:
+              behavior: DIRECT
+              constraints:
+                min_value: { numerator: 6, denominator: 1 }
+                max_value: { numerator: 80, denominator: 1 }
+
+          - point_id: watchdog_timer
+            name: Watchdog Expiry Timer
+            description: Expiry timer, reset by writing a new value within the interval; 65535 disables the watchdog
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1307, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: s
+            write:
+              behavior: DIRECT
+
+          - point_id: rfid_reset_trigger
+            name: RFID Tag Reset Trigger
+            description: Writing a value > 0 triggers a reset of register x275 (last RFID tag); self-clears to 0 when ready for the next request
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1308, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
