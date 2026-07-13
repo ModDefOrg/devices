@@ -180,6 +180,87 @@ devices:
   - energy_active
   - energy_apparent
   - energy_reactive
+- vendor: Eastron
+  model: SDM120 (single-phase)
+  category: energy-meter
+  doc_id: eastron.sdm120
+  profile: energy-meter/eastron-sdm120/eastron-sdm120.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 26
+  status: vendor-confirmed
+  source: Eastron SDM120 Modbus Protocol (vendor PDF) — single-phase measurements, demand,
+    and import/export/total active and reactive energy
+  source_url: https://www.eastroneurope.com/products/single-phase-energy-meters/sdm120-modbus
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - apparent_power
+  - reactive_power
+  - power_factor
+  - frequency
+  - energy_active
+  - energy_reactive
+- vendor: Eastron
+  model: SDM220 (single-phase)
+  category: energy-meter
+  doc_id: eastron.sdm220
+  profile: energy-meter/eastron-sdm220/eastron-sdm220.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 17
+  status: vendor-confirmed
+  source: Eastron SDM220 Modbus Protocol (vendor PDF) — single-phase measurements (incl. phase
+    angle) and import/export/total active and reactive energy
+  source_url: https://www.eastroneurope.com/products/single-phase-energy-meters/sdm220-modbus
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - apparent_power
+  - reactive_power
+  - power_factor
+  - frequency
+  - energy_active
+  - energy_reactive
+- vendor: Eastron
+  model: SDM230 (single-phase)
+  category: energy-meter
+  doc_id: eastron.sdm230
+  profile: energy-meter/eastron-sdm230/eastron-sdm230.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 39
+  status: vendor-confirmed
+  source: Eastron SDM230 Modbus Protocol (vendor PDF) — single-phase measurements, demand,
+    total/resettable energy, and two-tariff active/reactive energy
+  source_url: https://www.eastroneurope.com/products/single-phase-energy-meters/sdm230-modbus
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - apparent_power
+  - reactive_power
+  - power_factor
+  - frequency
+  - energy_active
+  - energy_reactive
+- vendor: Eastron
+  model: SDM72D-M (three-phase)
+  category: energy-meter
+  doc_id: eastron.sdm72
+  profile: energy-meter/eastron-sdm72/eastron-sdm72.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 13
+  status: vendor-confirmed
+  source: Eastron SDM72D-M Modbus Protocol V1.1 (vendor PDF) — total system power and
+    import/export/total (incl. resettable) active energy
+  source_url: https://www.eastroneurope.com/products/three-phase-energy-meters/sdm72d-modbus-mid
+  measurands:
+  - active_power
+  - energy_active
 - vendor: Inepro Metering
   model: PRO380 (three-phase)
   category: energy-meter

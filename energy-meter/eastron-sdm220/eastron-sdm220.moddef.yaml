@@ -1,0 +1,205 @@
+# Source: Eastron SDM220 Modbus Protocol (vendor PDF).
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# The SDM220 is a single-phase DIN-rail energy meter. It shares the Eastron
+# input-register address map with the SDM630, populating the single-phase slots.
+#
+# Encoding notes (from the vendor protocol document):
+#   - All measured values are 32-bit IEEE-754 floats over two registers,
+#     pre-scaled to engineering units (no transform.scale). Read from the Input
+#     Register space with FC04; holding-register settings use FC03/FC16 and are
+#     also float-encoded.
+#   - Documented 3xxxx/4xxxx addresses are 1-based; the ModDef 0-based offset =
+#     address - 30001 (input) or address - 40001 (holding). Register order is
+#     MSW-first: byte_order BIG_ENDIAN + word_order WORD_BIG_ENDIAN.
+
+doc_id: eastron.sdm220
+name: Eastron SDM220 Single-Phase Energy Meter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+devices:
+  - device_id: eastron-sdm220
+    vendor: Eastron
+    model: SDM220
+    supported_transports:
+      - MODBUS_RTU
+    blocks:
+      - block_id: measurements
+        name: Measured Values (Input Registers, FC04)
+        space: INPUT_REGISTER
+        length_words: 346
+        points:
+          - point_id: voltage
+            name: Voltage
+            description: Line-to-neutral voltage
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage }
+
+          - point_id: current
+            name: Current
+            description: Line current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 6, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: A
+            measurand: { base_quantity: current }
+
+          - point_id: active_power
+            name: Active Power
+            description: Total active power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 12, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: apparent_power
+            name: Apparent Power
+            description: Total apparent power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 18, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: VA
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL }
+
+          - point_id: reactive_power
+            name: Reactive Power
+            description: Total reactive power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 24, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: var
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL }
+
+          - point_id: power_factor
+            name: Power Factor
+            description: Power factor
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 30, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: "1"
+            measurand: { base_quantity: power_factor, aggregation: TOTAL }
+
+          - point_id: phase_angle
+            name: Phase Angle
+            description: Phase angle between voltage and current (degrees)
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 36, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: frequency
+            name: Frequency
+            description: Grid frequency
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 70, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+
+          - point_id: import_active_energy
+            name: Import Active Energy
+            description: Imported active energy
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 72, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME }
+
+          - point_id: export_active_energy
+            name: Export Active Energy
+            description: Exported active energy
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 74, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME }
+
+          - point_id: import_reactive_energy
+            name: Import Reactive Energy
+            description: Imported reactive energy
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 76, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: LIFETIME }
+
+          - point_id: export_reactive_energy
+            name: Export Reactive Energy
+            description: Exported reactive energy
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 78, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: LIFETIME }
+
+          - point_id: total_active_energy
+            name: Total Active Energy
+            description: Total active energy (import + export)
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 342, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kWh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: total_reactive_energy
+            name: Total Reactive Energy
+            description: Total reactive energy (import + export)
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 344, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+      - block_id: settings
+        name: Settings (Holding Registers, FC03/FC16)
+        space: HOLDING_REGISTER
+        start_offset: 18
+        length_words: 12
+        points:
+          - point_id: parity_stop
+            name: Network Parity/Stop
+            description: Serial parity and stop bits - 0 1-stop/no-parity, 1 1-stop/even, 2 1-stop/odd, 3 2-stop/no-parity
+            access: READ_WRITE
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 18, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            write: { behavior: DIRECT }
+
+          - point_id: meter_id
+            name: Meter ID
+            description: Modbus slave address, 1-247 (default 1)
+            access: READ_WRITE
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 20, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            write: { behavior: DIRECT }
+
+          - point_id: baud_rate
+            name: Baud Rate
+            description: Serial baud rate - 0 2400, 1 4800, 2 9600, 5 1200
+            access: READ_WRITE
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 28, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            write: { behavior: DIRECT }

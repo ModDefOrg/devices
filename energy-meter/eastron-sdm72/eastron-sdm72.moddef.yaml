@@ -1,0 +1,168 @@
+# Source: Eastron SDM72D-M Modbus Protocol V1.1 (vendor PDF).
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# The SDM72D-M is a three-phase four-wire DIN-rail energy meter with a compact,
+# energy-focused register set. It shares the Eastron input-register address map
+# with the SDM630.
+#
+# Encoding notes (from the vendor protocol document):
+#   - All measured values are 32-bit IEEE-754 floats over two registers,
+#     pre-scaled to engineering units (no transform.scale). Read from the Input
+#     Register space with FC04; holding-register settings use FC03/FC16 and are
+#     also float-encoded.
+#   - Documented 3xxxx/4xxxx addresses are 1-based; the ModDef 0-based offset =
+#     address - 30001 (input) or address - 40001 (holding). Register order is
+#     MSW-first: byte_order BIG_ENDIAN + word_order WORD_BIG_ENDIAN.
+#   - "Total kWh" (30343) equals import + export.
+
+doc_id: eastron.sdm72
+name: Eastron SDM72D-M Three-Phase Energy Meter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+devices:
+  - device_id: eastron-sdm72
+    vendor: Eastron
+    model: SDM72D-M
+    supported_transports:
+      - MODBUS_RTU
+    blocks:
+      - block_id: measurements
+        name: Measured Values (Input Registers, FC04)
+        space: INPUT_REGISTER
+        length_words: 1284
+        points:
+          - point_id: total_system_power
+            name: Total System Power
+            description: Total system active power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 52, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: import_active_energy
+            name: Total Import Active Energy
+            description: Total imported active energy
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 72, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME }
+
+          - point_id: export_active_energy
+            name: Total Export Active Energy
+            description: Total exported active energy
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 74, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME }
+
+          - point_id: total_active_energy
+            name: Total Active Energy
+            description: Total active energy (import + export)
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 342, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kWh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: resettable_total_active_energy
+            name: Resettable Total Active Energy
+            description: Resettable total active energy
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 384, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kWh
+            measurand: { base_quantity: energy_active }
+
+          - point_id: resettable_import_active_energy
+            name: Resettable Import Active Energy
+            description: Resettable imported active energy
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 388, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT }
+
+          - point_id: resettable_export_active_energy
+            name: Resettable Export Active Energy
+            description: Resettable exported active energy
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 390, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT }
+
+          - point_id: total_import_active_power
+            name: Total Import Active Power
+            description: Total import active power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 1280, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, direction: IMPORT, aggregation: TOTAL }
+
+          - point_id: total_export_active_power
+            name: Total Export Active Power
+            description: Total export active power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 1282, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, direction: EXPORT, aggregation: TOTAL }
+
+      - block_id: settings
+        name: Settings (Holding Registers, FC03/FC16)
+        space: HOLDING_REGISTER
+        start_offset: 18
+        length_words: 12
+        points:
+          - point_id: parity_stop
+            name: Network Parity/Stop
+            description: Serial parity and stop bits - 0 1-stop/no-parity, 1 1-stop/even, 2 1-stop/odd, 3 2-stop/no-parity
+            access: READ_WRITE
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 18, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            write: { behavior: DIRECT }
+
+          - point_id: meter_id
+            name: Meter ID
+            description: Modbus slave address, 1-247 (default 1)
+            access: READ_WRITE
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 20, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            write: { behavior: DIRECT }
+
+          - point_id: password
+            name: Password
+            description: Password for access to protected registers (default 1000)
+            access: READ_WRITE
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 24, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            write: { behavior: DIRECT }
+
+          - point_id: baud_rate
+            name: Baud Rate
+            description: Serial baud rate - 0 2400, 1 4800, 2 9600 (default), 5 1200
+            access: READ_WRITE
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 28, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            write: { behavior: DIRECT }
