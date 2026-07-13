@@ -1,0 +1,387 @@
+# Source: Webasto Live Modbus Specification (vendor PDF, rev 1.05, 2021-10-08).
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# The Webasto Live is an AC wallbox exposing a Modbus TCP server (the RTU port is
+# reserved for external meters). It shares the Webasto register layout with the
+# NEXT and adds EV-battery and departure-schedule registers.
+#
+# Encoding notes (from the vendor specification):
+#   - Modbus TCP, port 502, unit ID 255. Holding registers (FC03 read,
+#     FC06/FC16 write). Documented register numbers are the ModDef offset.
+#     Big-endian, MSW first (WORD_BIG_ENDIAN).
+#   - Per-phase currents are in mA (scale 1/1000 -> A); powers in W and energy in
+#     Wh (UINT32 over two registers). User ID (OCPP IdTag) is ASCII at 1600..1609.
+#   - Coverage: charge/EVSE/cable state, per-phase current, total active power,
+#     energy meter, current limits, user priority, EV battery SoC/capacity,
+#     departure schedule, the current-session block, and control registers.
+
+doc_id: webasto.live
+name: Webasto Live AC Wallbox
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  - type_id: charge_point_state
+    name: Charge Point State
+    values:
+      - { value: 0, name: NO_VEHICLE }
+      - { value: 1, name: VEHICLE_ATTACHED_NO_PERMISSION }
+      - { value: 3, name: CHARGING }
+      - { value: 4, name: CHARGING_PAUSED }
+      - { value: 7, name: CHARGING_ERROR }
+      - { value: 8, name: RESERVED }
+
+  - type_id: charge_state
+    name: Charge State
+    values:
+      - { value: 0, name: IDLE }
+      - { value: 1, name: CHARGING }
+
+  - type_id: evse_state
+    name: EVSE State
+    values:
+      - { value: 0, name: STARTING }
+      - { value: 1, name: RUNNING }
+      - { value: 2, name: ERROR }
+
+  - type_id: cable_state
+    name: Cable State
+    values:
+      - { value: 0, name: NO_CABLE }
+      - { value: 1, name: CABLE_NO_VEHICLE }
+      - { value: 2, name: CABLE_VEHICLE }
+      - { value: 3, name: CABLE_VEHICLE_LOCKED }
+
+devices:
+  - device_id: webasto-live
+    vendor: Webasto
+    model: Live
+    supported_transports:
+      - MODBUS_TCP
+    blocks:
+      - block_id: status
+        name: Status & Measurements (Holding, FC03)
+        space: HOLDING_REGISTER
+        start_offset: 1000
+        length_words: 110
+        points:
+          - point_id: charge_point_state
+            name: Charge Point State
+            description: State of the charging device
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: charge_point_state } }
+            mapping: { space: HOLDING_REGISTER, offset: 1000, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: charge_state
+            name: Charge State
+            description: Idle or charging
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: charge_state } }
+            mapping: { space: HOLDING_REGISTER, offset: 1001, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: evse_state
+            name: EVSE State
+            description: State of the charging station
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: evse_state } }
+            mapping: { space: HOLDING_REGISTER, offset: 1002, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: cable_state
+            name: Cable State
+            description: State of the charging cable
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: cable_state } }
+            mapping: { space: HOLDING_REGISTER, offset: 1004, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: current_l1
+            name: Current L1
+            description: Charging current L1
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1008, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1 }
+
+          - point_id: current_l2
+            name: Current L2
+            description: Charging current L2
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1010, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+
+          - point_id: current_l3
+            name: Current L3
+            description: Charging current L3
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1012, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+
+          - point_id: total_active_power
+            name: Active Power
+            description: Total active charging power
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1020, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: energy_meter
+            name: Energy Meter
+            description: Meter reading of the charging station
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1036, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: max_current_hardware
+            name: Maximum Current (Hardware)
+            description: Maximum charging current of the hardware (EVSE, cable, EV)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1100, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: min_current_limit
+            name: Minimum Current Limit
+            description: Minimum charging current of the hardware
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1102, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: max_current_evse
+            name: Maximum Current from EVSE
+            description: Maximum charging current of the charging station
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1104, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: max_current_cable
+            name: Maximum Current from Cable
+            description: Maximum charging current of the cable
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1106, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: max_current_ev
+            name: Maximum Current from EV
+            description: Maximum charging current of the EV
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1108, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+      - block_id: vehicle_schedule
+        name: Vehicle & Departure Schedule (Holding, FC03)
+        space: HOLDING_REGISTER
+        start_offset: 1200
+        length_words: 214
+        points:
+          - point_id: user_priority
+            name: User Priority
+            description: User priority (1 high priority)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1200, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: ev_battery_soc
+            name: EV Battery State
+            description: Estimated EV battery state of charge (0-100)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1300, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: "%"
+            measurand: { base_quantity: state_of_charge, location: EV }
+
+          - point_id: ev_battery_capacity
+            name: EV Battery Capacity
+            description: EV battery energy capacity
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1302, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: schedule_type
+            name: Schedule Type
+            description: Charging schedule type
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1400, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: required_energy
+            name: Required Energy
+            description: Desired energy for the charging schedule
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1402, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+
+          - point_id: required_soc
+            name: Required Battery State
+            description: Desired state of the battery (0-100)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1406, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: "%"
+            measurand: { base_quantity: state_of_charge, location: EV }
+
+          - point_id: scheduled_time
+            name: Scheduled Departure Time
+            description: Departure time (packed hhmmss)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1408, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: scheduled_date
+            name: Scheduled Departure Date
+            description: Departure date (packed yymmdd)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1412, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+      - block_id: session
+        name: Current Session (Holding, FC03)
+        space: HOLDING_REGISTER
+        start_offset: 1502
+        length_words: 120
+        points:
+          - point_id: session_charged_energy
+            name: Session Charged Energy
+            description: Sum of charged energy for the current session
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1502, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, accumulation: SESSION }
+
+          - point_id: session_start_time
+            name: Session Start Time
+            description: Start time of the charging process (packed hhmmss)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1504, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: session_charging_time
+            name: Session Charging Time
+            description: Duration since the beginning of charge
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1508, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+
+          - point_id: session_end_time
+            name: Session End Time
+            description: End time of the charging process (packed hhmmss)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1512, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: user_id
+            name: User ID
+            description: User ID (OCPP IdTag) from the current session, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 1600, length_words: 10, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: smart_vehicle_detected
+            name: ISO 15118 Smart Vehicle Detected
+            description: 1 if the connected EV is a smart (ISO 15118) vehicle, else 0
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1620, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+      - block_id: control
+        name: Control (Holding, FC06/FC16)
+        space: HOLDING_REGISTER
+        start_offset: 2000
+        length_words: 4001
+        points:
+          - point_id: safe_current
+            name: Safe Current
+            description: Maximum charge current under communication failure
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 2000, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+            write: { behavior: DIRECT }
+
+          - point_id: com_timeout
+            name: Communication Timeout
+            description: Communication timeout before falling back to the safe current
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 2002, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: s
+            write: { behavior: DIRECT }
+
+          - point_id: charge_power_setpoint
+            name: Charge Power Setpoint
+            description: Commanded charge power
+            access: WRITE_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 5000, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            write: { behavior: DIRECT }
+
+          - point_id: charge_current_setpoint
+            name: Charge Current Setpoint
+            description: Commanded charge current
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 5004, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+            write: { behavior: DIRECT }
+
+          - point_id: life_bit
+            name: Life Bit
+            description: Communication monitoring toggle bit - the EMS writes 1, the Live clears it to 0
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 6000, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }

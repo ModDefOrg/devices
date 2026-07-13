@@ -142,6 +142,82 @@ devices:
   - energy_apparent
   - state_of_charge
   - fault_code
+- vendor: Webasto
+  model: NEXT
+  category: ev-charger
+  doc_id: webasto.next
+  profile: ev-charger/webasto-next/webasto-next.moddef.yaml
+  transports:
+  - MODBUS_TCP
+  points: 30
+  status: vendor-confirmed
+  source: Webasto NEXT Modbus Specification rev 2.00 (2022-02-09) — charge/EVSE/cable state, per-phase
+    current and power, energy meter, current limits, session data, and writable control registers
+  source_url: https://www.webasto-charging.com/
+  measurands:
+  - current
+  - active_power
+  - energy_active
+  - fault_code
+- vendor: Webasto
+  model: Live
+  category: ev-charger
+  doc_id: webasto.live
+  profile: ev-charger/webasto-live/webasto-live.moddef.yaml
+  transports:
+  - MODBUS_TCP
+  points: 33
+  status: vendor-confirmed
+  source: Webasto Live Modbus Specification rev 1.05 (2021-10-08) — state, per-phase current, total
+    active power, energy meter, current limits, EV battery SoC/capacity, departure schedule, session,
+    and control registers
+  source_url: https://www.webasto-charging.com/
+  measurands:
+  - current
+  - active_power
+  - energy_active
+  - state_of_charge
+- vendor: Webasto
+  model: Unite
+  category: ev-charger
+  doc_id: webasto.unite
+  profile: ev-charger/webasto-unite/webasto-unite.moddef.yaml
+  transports:
+  - MODBUS_TCP
+  points: 36
+  status: vendor-confirmed
+  source: Webasto Unite Modbus Specification rev 1.00 (2022-06-28) — identity, per-phase current/voltage/
+    power, meter reading, current limits, session data, and control registers
+  source_url: https://www.webasto-charging.com/
+  measurands:
+  - current
+  - voltage
+  - active_power
+  - energy_active
+  - fault_code
+- vendor: Alfen
+  model: NG9xx (Eve Single)
+  category: ev-charger
+  doc_id: alfen.ng9xx
+  profile: ev-charger/alfen-ng9xx/alfen-ng9xx.moddef.yaml
+  transports:
+  - MODBUS_TCP
+  points: 50
+  status: vendor-confirmed
+  source: Alfen ACE Modbus for NG9xx (Eve Single/Double, ICU) — station identity/status (server 200)
+    and the per-socket SunSpec-style energy-measurement set plus charging state and current setpoints
+    (server 1)
+  source_url: https://alfen.com/en/downloads
+  measurands:
+  - voltage
+  - current
+  - frequency
+  - active_power
+  - reactive_power
+  - apparent_power
+  - power_factor
+  - energy_active
+  - temperature
 - vendor: Daikin
   model: Altherma 3 (air-to-water)
   category: hvac

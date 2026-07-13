@@ -1,0 +1,525 @@
+# Source: Alfen ACE Modbus for NG9xx (Eve Single, Eve Double, ICU), vendor PDF.
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# The Alfen NG9xx platform (Eve Single Pro-line etc.) exposes a SunSpec-style
+# Modbus TCP register set over port 502.
+#
+# Encoding notes (from the vendor manual):
+#   - Modbus TCP, port 502, holding registers (FC03 read, FC06/FC16 write).
+#   - Two Modbus server (unit) addresses: 200 for station-wide registers, and
+#     1 (or 2) for socket-specific registers. This profile models socket 1; the
+#     server address is selected at bind time, not encoded here.
+#   - Documented register numbers are 1-based: the ModDef 0-based offset =
+#     register - 1 (e.g. register 306 -> offset 305).
+#   - 32-bit values are mixed-endian: the 16-bit words are big-endian (high byte
+#     first) and the word order is low-word-first, i.e. byte_order BIG_ENDIAN +
+#     word_order WORD_LITTLE_ENDIAN. Measurements are FLOAT32, energy counters
+#     FLOAT64, in engineering units (no transform.scale). Not-a-number is 0xFFFF.
+#   - Coverage: station identity and status (server 200), and the per-socket
+#     energy-measurement set plus the charging state and current setpoints
+#     (server 1).
+
+doc_id: alfen.ng9xx
+name: Alfen NG9xx (Eve Single) EV Charging Station
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+devices:
+  - device_id: alfen-ng9xx
+    vendor: Alfen
+    model: NG9xx (Eve Single)
+    supported_transports:
+      - MODBUS_TCP
+    blocks:
+      # --- Station registers (Modbus server address 200) ------------------
+      - block_id: station
+        name: Station Identity & Status (server 200)
+        space: HOLDING_REGISTER
+        start_offset: 99
+        length_words: 1005
+        points:
+          - point_id: name
+            name: Name
+            description: Station name, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 99, length_words: 17, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: manufacturer
+            name: Manufacturer
+            description: Manufacturer, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 116, length_words: 5, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: firmware_version
+            name: Firmware Version
+            description: Firmware version, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 122, length_words: 17, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: platform_type
+            name: Platform Type
+            description: Hardware platform type (e.g. NG910), ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 139, length_words: 17, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: station_serial_number
+            name: Station Serial Number
+            description: Station serial number, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 156, length_words: 11, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: uptime
+            name: Uptime
+            description: Station uptime
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 173, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: s
+
+          - point_id: timezone_offset
+            name: Time Zone Offset
+            description: Time-zone offset from UTC
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 177, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: min
+
+          - point_id: station_active_max_current
+            name: Station Active Maximum Current
+            description: Actual station-wide maximum current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1099, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: A
+
+          - point_id: temperature
+            name: Board Temperature
+            description: Station board temperature
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1101, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: degC
+            measurand: { base_quantity: temperature, location: INTERNAL }
+
+      # --- Socket registers (Modbus server address 1) ---------------------
+      - block_id: socket
+        name: Socket 1 Measurements & Control (server 1)
+        space: HOLDING_REGISTER
+        start_offset: 299
+        length_words: 916
+        points:
+          - point_id: meter_state
+            name: Meter State
+            description: Meter state bitmask
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 299, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: meter_type
+            name: Meter Type
+            description: Meter type - 0 RTU, others per manual
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 304, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: voltage_l1_n
+            name: Voltage L1-N
+            description: Phase L1 to neutral voltage
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 305, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+
+          - point_id: voltage_l2_n
+            name: Voltage L2-N
+            description: Phase L2 to neutral voltage
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 307, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+
+          - point_id: voltage_l3_n
+            name: Voltage L3-N
+            description: Phase L3 to neutral voltage
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 309, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+
+          - point_id: voltage_l1_l2
+            name: Voltage L1-L2
+            description: Line-to-line voltage L1-L2
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 311, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_L2 }
+
+          - point_id: voltage_l2_l3
+            name: Voltage L2-L3
+            description: Line-to-line voltage L2-L3
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 313, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_L3 }
+
+          - point_id: voltage_l3_l1
+            name: Voltage L3-L1
+            description: Line-to-line voltage L3-L1
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 315, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_L1 }
+
+          - point_id: current_n
+            name: Current N
+            description: Neutral current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 317, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: N }
+
+          - point_id: current_l1
+            name: Current L1
+            description: Phase L1 current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 319, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1 }
+
+          - point_id: current_l2
+            name: Current L2
+            description: Phase L2 current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 321, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+
+          - point_id: current_l3
+            name: Current L3
+            description: Phase L3 current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 323, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+
+          - point_id: current_sum
+            name: Current Sum
+            description: Sum of phase currents
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 325, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: A
+            measurand: { base_quantity: current, aggregation: TOTAL }
+
+          - point_id: power_factor_l1
+            name: Power Factor L1
+            description: Phase L1 power factor
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 327, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L1 }
+
+          - point_id: power_factor_l2
+            name: Power Factor L2
+            description: Phase L2 power factor
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 329, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L2 }
+
+          - point_id: power_factor_l3
+            name: Power Factor L3
+            description: Phase L3 power factor
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 331, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L3 }
+
+          - point_id: power_factor_sum
+            name: Power Factor Sum
+            description: Overall power factor
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 333, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: "1"
+            measurand: { base_quantity: power_factor, aggregation: TOTAL }
+
+          - point_id: frequency
+            name: Frequency
+            description: Grid frequency
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 335, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+
+          - point_id: real_power_l1
+            name: Real Power L1
+            description: Phase L1 real power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 337, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+
+          - point_id: real_power_l2
+            name: Real Power L2
+            description: Phase L2 real power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 339, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+
+          - point_id: real_power_l3
+            name: Real Power L3
+            description: Phase L3 real power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 341, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+
+          - point_id: real_power_sum
+            name: Real Power Sum
+            description: Total real power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 343, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: apparent_power_l1
+            name: Apparent Power L1
+            description: Phase L1 apparent power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 345, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L1 }
+
+          - point_id: apparent_power_l2
+            name: Apparent Power L2
+            description: Phase L2 apparent power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 347, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L2 }
+
+          - point_id: apparent_power_l3
+            name: Apparent Power L3
+            description: Phase L3 apparent power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 349, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L3 }
+
+          - point_id: apparent_power_sum
+            name: Apparent Power Sum
+            description: Total apparent power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 351, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: VA
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL }
+
+          - point_id: reactive_power_l1
+            name: Reactive Power L1
+            description: Phase L1 reactive power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 353, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L1 }
+
+          - point_id: reactive_power_l2
+            name: Reactive Power L2
+            description: Phase L2 reactive power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 355, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L2 }
+
+          - point_id: reactive_power_l3
+            name: Reactive Power L3
+            description: Phase L3 reactive power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 357, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L3 }
+
+          - point_id: reactive_power_sum
+            name: Reactive Power Sum
+            description: Total reactive power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 359, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: var
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL }
+
+          - point_id: real_energy_delivered_l1
+            name: Real Energy Delivered L1
+            description: Phase L1 real energy delivered to the vehicle
+            access: READ_ONLY
+            storage_type: IEEE754_F64
+            value_type: { primitive: FLOAT64 }
+            mapping: { space: HOLDING_REGISTER, offset: 361, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: IMPORT, phase_ref: L1, accumulation: LIFETIME }
+
+          - point_id: real_energy_delivered_l2
+            name: Real Energy Delivered L2
+            description: Phase L2 real energy delivered to the vehicle
+            access: READ_ONLY
+            storage_type: IEEE754_F64
+            value_type: { primitive: FLOAT64 }
+            mapping: { space: HOLDING_REGISTER, offset: 365, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: IMPORT, phase_ref: L2, accumulation: LIFETIME }
+
+          - point_id: real_energy_delivered_l3
+            name: Real Energy Delivered L3
+            description: Phase L3 real energy delivered to the vehicle
+            access: READ_ONLY
+            storage_type: IEEE754_F64
+            value_type: { primitive: FLOAT64 }
+            mapping: { space: HOLDING_REGISTER, offset: 369, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: IMPORT, phase_ref: L3, accumulation: LIFETIME }
+
+          - point_id: real_energy_delivered_sum
+            name: Real Energy Delivered Sum
+            description: Total real energy delivered to the vehicle
+            access: READ_ONLY
+            storage_type: IEEE754_F64
+            value_type: { primitive: FLOAT64 }
+            mapping: { space: HOLDING_REGISTER, offset: 373, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME }
+
+          - point_id: real_energy_consumed_sum
+            name: Real Energy Consumed Sum
+            description: Total real energy consumed from the vehicle
+            access: READ_ONLY
+            storage_type: IEEE754_F64
+            value_type: { primitive: FLOAT64 }
+            mapping: { space: HOLDING_REGISTER, offset: 389, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME }
+
+          - point_id: availability
+            name: Availability
+            description: Socket availability - 1 operative, 0 inoperative
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1199, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: mode3_state
+            name: Mode 3 State
+            description: IEC 61851 Mode 3 state string (e.g. "C2")
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 1200, length_words: 5, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: actual_applied_max_current
+            name: Actual Applied Maximum Current
+            description: Actual applied overall maximum current for the socket
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1205, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: A
+
+          - point_id: modbus_max_current_setpoint
+            name: Modbus Maximum Current Setpoint
+            description: EMS-written maximum current setpoint (falls back to safe current on timeout)
+            access: READ_WRITE
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1209, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: A
+            write: { behavior: DIRECT }
+
+          - point_id: active_load_balancing_max_current
+            name: Active Load Balancing Maximum Current
+            description: Active load-balancing maximum current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1211, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: A
+
+          - point_id: setpoint_accounted
+            name: Setpoint Accounted For
+            description: Indicates whether the received maximum-current setpoint is taken into account
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1213, length_words: 1, byte_order: BIG_ENDIAN }

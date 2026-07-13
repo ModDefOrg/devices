@@ -1,0 +1,388 @@
+# Source: Webasto Unite Modbus Specification (vendor PDF, rev 1.00, 2022-06-28).
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# The Webasto Unite is an AC wallbox exposing a Modbus TCP server. Its register
+# map extends the Webasto layout with identity strings, per-phase voltage, and a
+# meter reading in 0.1 kWh units.
+#
+# Encoding notes (from the vendor specification):
+#   - Modbus TCP, port 502, unit ID 255. Holding registers (FC03 read,
+#     FC06/FC16 write). Documented register numbers are the ModDef offset.
+#     Big-endian, MSW first (WORD_BIG_ENDIAN).
+#   - Per-phase currents are in mA (scale 1/1000 -> A); voltages in whole volts;
+#     powers in W (UINT32); the meter reading is in 0.1 kWh (scale 1/10 -> kWh).
+#   - State registers (charge point / charging / equipment / cable) follow the
+#     IEC 61851 model; their coded values are kept as integers with the
+#     documented meanings in the description.
+#   - Coverage: identity, date/time, chargepoint power and phase count, state
+#     registers, per-phase current/voltage/power, meter reading, current limits,
+#     the current-session block, and control registers.
+
+doc_id: webasto.unite
+name: Webasto Unite AC Wallbox
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+devices:
+  - device_id: webasto-unite
+    vendor: Webasto
+    model: Unite
+    supported_transports:
+      - MODBUS_TCP
+    blocks:
+      - block_id: identity
+        name: Identity (Holding, FC03)
+        space: HOLDING_REGISTER
+        start_offset: 100
+        length_words: 305
+        points:
+          - point_id: serial_number
+            name: Serial Number
+            description: Charge point serial number, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 100, length_words: 25, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: chargepoint_id
+            name: Charge Point ID
+            description: Charge point identifier, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 130, length_words: 50, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: brand
+            name: Brand
+            description: Charge point brand, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 190, length_words: 10, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: model
+            name: Model
+            description: Charge point model, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 210, length_words: 5, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: date
+            name: Date
+            description: Current date of the charge point (packed yymmdd)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 290, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: time
+            name: Time
+            description: Current time of the charge point (packed hhmmss)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 294, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: chargepoint_power
+            name: Charge Point Power
+            description: Maximum power of the charge point
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 400, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+
+          - point_id: number_of_phases
+            name: Number of Phases
+            description: Number of connected phases (0 single-phase)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 404, length_words: 1, byte_order: BIG_ENDIAN }
+
+      - block_id: status
+        name: Status & Measurements (Holding, FC03)
+        space: HOLDING_REGISTER
+        start_offset: 1000
+        length_words: 110
+        points:
+          - point_id: charge_point_state
+            name: Charge Point State
+            description: Charge point state (IEC 61851 model; e.g. 3 SuspendedEVSE)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1000, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: charging_state
+            name: Charging State
+            description: Charging state (IEC 61851 pilot states Ax, Bx, C1, Dx)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1001, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: equipment_state
+            name: Equipment State
+            description: Equipment state (2 fault)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1002, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: cable_state
+            name: Cable State
+            description: Cable state (vehicle connection status)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1004, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: evse_fault_code
+            name: EVSE Fault Code
+            description: EVSE fault code (0 no fault)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1006, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            measurand: { base_quantity: fault_code }
+
+          - point_id: current_l1
+            name: Current L1
+            description: L1 instantaneous current
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1008, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1 }
+
+          - point_id: current_l2
+            name: Current L2
+            description: L2 instantaneous current
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1010, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+
+          - point_id: current_l3
+            name: Current L3
+            description: L3 instantaneous current
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1012, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+
+          - point_id: voltage_l1
+            name: Voltage L1
+            description: L1 voltage
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1014, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+
+          - point_id: voltage_l2
+            name: Voltage L2
+            description: L2 voltage
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1016, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+
+          - point_id: voltage_l3
+            name: Voltage L3
+            description: L3 voltage
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1018, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+
+          - point_id: total_active_power
+            name: Active Power
+            description: Total active power
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1020, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: active_power_l1
+            name: Active Power L1
+            description: L1 active power
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1024, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+
+          - point_id: active_power_l2
+            name: Active Power L2
+            description: L2 active power
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1028, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+
+          - point_id: active_power_l3
+            name: Active Power L3
+            description: L3 active power
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1032, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+
+          - point_id: meter_reading
+            name: Meter Reading
+            description: Energy meter reading (0.1 kWh units)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 1036, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: session_max_current
+            name: Session Maximum Current
+            description: Maximum possible charging current for the session
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1100, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: evse_min_current
+            name: EVSE Minimum Current
+            description: Minimum possible charging current
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1102, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: evse_max_current
+            name: EVSE Maximum Current
+            description: Maximum possible charging current from the EVSE
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1104, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+          - point_id: cable_max_current
+            name: Cable Maximum Current
+            description: Maximum possible charging current from the cable
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1106, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+
+      - block_id: session
+        name: Current Session (Holding, FC03)
+        space: HOLDING_REGISTER
+        start_offset: 1502
+        length_words: 12
+        points:
+          - point_id: session_energy
+            name: Session Energy
+            description: Total energy for the current session
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1502, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, accumulation: SESSION }
+
+          - point_id: session_start_time
+            name: Session Start Time
+            description: Session start time (packed hhmmss)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1504, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: session_duration
+            name: Session Duration
+            description: Session duration
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1508, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+
+          - point_id: session_end_time
+            name: Session End Time
+            description: Session end time (packed hhmmss)
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1512, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+      - block_id: control
+        name: Control (Holding, FC06/FC16)
+        space: HOLDING_REGISTER
+        start_offset: 2000
+        length_words: 4001
+        points:
+          - point_id: failsafe_current
+            name: Failsafe Current
+            description: Failsafe charging current under communication failure
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 2000, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+            write: { behavior: DIRECT }
+
+          - point_id: failsafe_timeout
+            name: Failsafe Timeout
+            description: Communication timeout before applying the failsafe current
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 2002, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: s
+            write: { behavior: DIRECT }
+
+          - point_id: charging_current
+            name: Charging Current Setpoint
+            description: Dynamic charging current setpoint
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 5004, length_words: 1, byte_order: BIG_ENDIAN }
+            unit: A
+            write: { behavior: DIRECT }
+
+          - point_id: alive_register
+            name: Alive Register
+            description: Communication monitoring register (the EVSE writes 0)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 6000, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
