@@ -337,6 +337,28 @@ devices:
   measurands:
   - active_power
   - energy_active
+- vendor: Shelly
+  model: Pro 3EM (three-phase)
+  category: energy-meter
+  doc_id: shelly.pro-3em
+  profile: energy-meter/shelly-pro-3em/shelly-pro-3em.moddef.yaml
+  transports:
+  - MODBUS_TCP
+  points: 30
+  status: unverified
+  source: Shelly Gen2 API docs (EM + EMData component Modbus register maps) — device info, per-phase
+    and total voltage/current/active+apparent power/power factor/frequency, and total active/returned
+    energy. DRAFT for hardware testing — float word order, function code, and address base are
+    documented assumptions (see profile header) pending confirmation.
+  source_url: https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/EM/
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - apparent_power
+  - power_factor
+  - frequency
+  - energy_active
 - vendor: Inepro Metering
   model: PRO380 (three-phase)
   category: energy-meter

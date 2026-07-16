@@ -1,0 +1,358 @@
+# Source: Shelly Gen2 API docs — Modbus, EM and EMData component register maps.
+#   https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Modbus/
+#   https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/EM/
+#   https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/EMData/
+# Part of the ModDef blessed device registry.
+#
+# The Shelly Pro 3EM is a three-phase energy meter exposing Modbus TCP (port 502).
+#
+# *** UNVERIFIED / DRAFT ***
+# Built for testing against hardware. The Shelly docs do NOT state several details
+# that this profile has to assume; each is called out so a tester can correct it:
+#   - Word order of the 32-bit floats is undocumented. This profile assumes
+#     big-endian, most-significant-word-first (byte_order BIG_ENDIAN,
+#     word_order WORD_BIG_ENDIAN). If values look wrong, try WORD_LITTLE_ENDIAN.
+#   - Function code / address space is undocumented. The read-only EM/EMData
+#     registers are modeled here as INPUT_REGISTER (FC04); Shelly may instead
+#     serve them as holding registers (FC03) — flip `space` if reads fail.
+#   - Register numbers are taken as direct 0-based Modbus addresses, so the
+#     ModDef offset equals the documented address (e.g. 31013 -> offset 31013).
+#
+# Register model (component/instance based):
+#   - Device info: fixed registers 30000..30047 (MAC, model, name; ASCII).
+#   - EM component (live values): base 31000, +80 per additional instance;
+#     per-phase sub-block stride +20 (A=31020, B=31040, C=31060).
+#   - EMData component (energy counters): base 31160, +70 per additional instance.
+#   This profile models instance 0. All measured values are IEEE-754 float32 in
+#   engineering units (no scaling); errors are per-register booleans.
+
+doc_id: shelly.pro-3em
+name: Shelly Pro 3EM Three-Phase Energy Meter
+version: 0.1.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+devices:
+  - device_id: shelly-pro-3em
+    vendor: Shelly
+    model: Pro 3EM
+    supported_transports:
+      - MODBUS_TCP
+    blocks:
+      # --- Device information (fixed registers 30000..) -------------------
+      - block_id: device_info
+        name: Device Information
+        space: INPUT_REGISTER
+        start_offset: 30000
+        length_words: 48
+        points:
+          - point_id: mac_address
+            name: MAC Address
+            description: Device MAC address, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 30000, length_words: 6, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: model
+            name: Device Model
+            description: Device model string, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 30006, length_words: 10, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+          - point_id: device_name
+            name: Device Name
+            description: User-configured device name, ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 30016, length_words: 32, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+      # --- EM component: live measurements (base 31000) -------------------
+      - block_id: em
+        name: Energy Meter (live values, instance 0)
+        space: INPUT_REGISTER
+        start_offset: 31000
+        length_words: 74
+        points:
+          - point_id: timestamp
+            name: Timestamp
+            description: Unix timestamp of the last update
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31000, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+
+          - point_id: phase_sequence_error
+            name: Phase Sequence Error
+            description: Phase rotation error flag
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: INPUT_REGISTER, offset: 31006, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: neutral_current
+            name: Neutral Current
+            description: Neutral current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31007, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: N }
+
+          - point_id: total_current
+            name: Total Current
+            description: Sum of phase currents
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31011, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: A
+            measurand: { base_quantity: current, aggregation: TOTAL }
+
+          - point_id: total_active_power
+            name: Total Active Power
+            description: Total active power (sum of phases)
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31013, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: total_apparent_power
+            name: Total Apparent Power
+            description: Total apparent power (sum of phases)
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31015, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: VA
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL }
+
+          # ---- Phase A (base 31020) ----
+          - point_id: voltage_a
+            name: Phase A Voltage
+            description: Phase A voltage
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31020, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+
+          - point_id: current_a
+            name: Phase A Current
+            description: Phase A current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31022, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1 }
+
+          - point_id: active_power_a
+            name: Phase A Active Power
+            description: Phase A active power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31024, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+
+          - point_id: apparent_power_a
+            name: Phase A Apparent Power
+            description: Phase A apparent power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31026, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L1 }
+
+          - point_id: power_factor_a
+            name: Phase A Power Factor
+            description: Phase A power factor
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31028, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L1 }
+
+          - point_id: frequency_a
+            name: Phase A Frequency
+            description: Phase A frequency
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31030, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+
+          # ---- Phase B (base 31040) ----
+          - point_id: voltage_b
+            name: Phase B Voltage
+            description: Phase B voltage
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31040, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+
+          - point_id: current_b
+            name: Phase B Current
+            description: Phase B current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31042, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+
+          - point_id: active_power_b
+            name: Phase B Active Power
+            description: Phase B active power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31044, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+
+          - point_id: apparent_power_b
+            name: Phase B Apparent Power
+            description: Phase B apparent power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31046, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L2 }
+
+          - point_id: power_factor_b
+            name: Phase B Power Factor
+            description: Phase B power factor
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31048, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L2 }
+
+          - point_id: frequency_b
+            name: Phase B Frequency
+            description: Phase B frequency
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31050, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+
+          # ---- Phase C (base 31060) ----
+          - point_id: voltage_c
+            name: Phase C Voltage
+            description: Phase C voltage
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31060, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+
+          - point_id: current_c
+            name: Phase C Current
+            description: Phase C current
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31062, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+
+          - point_id: active_power_c
+            name: Phase C Active Power
+            description: Phase C active power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31064, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+
+          - point_id: apparent_power_c
+            name: Phase C Apparent Power
+            description: Phase C apparent power
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31066, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L3 }
+
+          - point_id: power_factor_c
+            name: Phase C Power Factor
+            description: Phase C power factor
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31068, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L3 }
+
+          - point_id: frequency_c
+            name: Phase C Frequency
+            description: Phase C frequency
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31070, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+
+      # --- EMData component: energy counters (base 31160) -----------------
+      # Per-phase energy sub-blocks exist at 31170 (A), 31190 (B), 31210 (C)
+      # with a +20 stride, but the vendor docs do not give the exact sub-field
+      # offsets, so only the well-defined totals are modeled here.
+      - block_id: emdata
+        name: Energy Counters (instance 0)
+        space: INPUT_REGISTER
+        start_offset: 31160
+        length_words: 6
+        points:
+          - point_id: energy_timestamp
+            name: Energy Timestamp
+            description: Unix timestamp of the last energy update
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31160, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: s
+
+          - point_id: total_active_energy
+            name: Total Active Energy
+            description: Total active energy accumulated across all phases (perpetual)
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31162, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME }
+
+          - point_id: total_active_energy_returned
+            name: Total Active Energy Returned
+            description: Total returned (exported) active energy accumulated across all phases (perpetual)
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: INPUT_REGISTER, offset: 31164, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME }
