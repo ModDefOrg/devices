@@ -26,7 +26,7 @@ Categories: `solar-inverter`, `battery-storage`, `ev-charger`, `hvac`,
 
 ## What's here
 
-This first set is deliberately small. The eight profiles were picked so that
+This first set is deliberately small. These profiles were picked so that
 between them they exercise every encoding pattern in the spec, which is what
 shakes out bugs in the stdlib and the codec before the registry grows.
 
@@ -40,6 +40,7 @@ shakes out bugs in the stdlib and the codec before the registry grows.
 | Eastron SDM630 | energy-meter | IEEE-754 floats in input registers, per-phase measurands |
 | Carlo Gavazzi EM24-DIN | energy-meter | Integer registers with little-endian **word order** (the word-swap case), integer scaling |
 | ABB B23 | energy-meter | The wide one: U32/U64 energy, signed power, sentinels, an ASCII string field, multi-flag status registers, a date/time register |
+| Iskra WM3M4 | energy-meter | Composed values: T5/T6 embedded decade exponent (same-word mantissa/exponent bit windows, §14.2) and interleaved mantissa/exponent energy-total pools |
 
 ## Encoding-pattern coverage
 
@@ -60,11 +61,12 @@ shakes out bugs in the stdlib and the codec before the registry grows.
 | Write semantics + `COMMAND` | ABB Terra; R/W setpoints in Growatt, Daikin |
 | Measurand qualifiers (phase/direction/aggregation/location/accumulation) | across the set |
 | Modbus TCP + `default_unit_id` + overlay block | Victron Venus OS |
+| Composed mantissa/exponent (§14) incl. embedded decade exponent (§14.2) | Iskra WM3M4 |
 
-Patterns these profiles don't reach yet (`COIL`/`DISCRETE_INPUT`, composed
-mantissa/exponent, `selector_ref`, repeating arrays with a stride, `BCD`,
-`U24/U48`) are covered by the golden fixtures and codec tests in the `moddef`
-repo, and will land here when a real device needs them.
+Patterns these profiles don't reach yet (`COIL`/`DISCRETE_INPUT`,
+`selector_ref`, repeating arrays with a stride, `BCD`, `U24/U48`) are covered
+by the golden fixtures and codec tests in the `moddef` repo, and will land
+here when a real device needs them.
 
 ## Validating
 

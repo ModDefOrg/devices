@@ -412,13 +412,21 @@ devices:
   profile: energy-meter/iskra-wm3m4/iskra-wm3m4.moddef.yaml
   transports:
   - MODBUS_RTU
-  points: 39
+  points: 73
   status: vendor-confirmed
-  source: Iskra WM3M4/WM3M4C User's Manual Ver 2.13 (doc 22433950) — identification, power-quality
-    metrics, tariff, and the EV charging-process billing block; instantaneous V/I/P (T5/T6/T7
-    embedded-exponent format) and the mantissa/exponent energy totals are not expressible in ModDef v0.4
+  source: Iskra WM3M4/WM3M4C User's Manual Ver 2.13 (doc 22433950) — identification, instantaneous
+    measurements (T5/T6 embedded decade exponent, spec §14.2; T7 power factor), non-reset energy
+    totals (interleaved mantissa/exponent pools), power-quality metrics, tariff, and the EV
+    charging-process billing block
   source_url: https://www.iskra.eu/f/docs/Smart-energy-meters/K_WM3M4_EN_22433950_Users_manual_Ver_2.13.pdf
   measurands:
+  - frequency
+  - voltage
+  - current
+  - active_power
+  - reactive_power
+  - apparent_power
+  - power_factor
   - energy_active
   - temperature
 - vendor: Carlo Gavazzi

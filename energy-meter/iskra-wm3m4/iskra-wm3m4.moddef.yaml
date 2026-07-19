@@ -15,23 +15,31 @@
 #   - Iskra data types: T1 = u16, T2 = s16, T3 = s32, T3u/T_32U = u32,
 #     T16 = u16 with 2 decimals (value = raw/100), T17 = s16 with 2 decimals,
 #     T_StrN = ASCII text (2 chars per register).
-#   - LIMITATIONS (values omitted because ModDef v0.4 can't express them):
-#       * The instantaneous measurements (voltage, current, active/reactive/
-#         apparent power, power factor, frequency at 30105..30190) use Iskra's
-#         T5/T6/T7 format, which embeds a per-reading signed decade exponent in
-#         the high byte of the same 32-bit word (value = mantissa(24-bit) *
-#         10^exponent(8-bit)). There is no transform for an exponent carried
-#         inside the value word, so these points cannot be represented.
-#       * The non-reset energy total counters (30418..30425) store the value as a
-#         T3 mantissa with a separate T2 decade exponent, but the mantissas and
-#         exponents are pooled in interleaved register ranges (30414..30417 and
-#         30418..30425); the overlapping windows can't be modeled as separate
-#         composed points. The EV-charging billing counters below carry the exact
-#         per-session energy instead.
-#   - Coverage: device identification, power-quality metrics (internal
-#     temperature, voltage/current THD), active tariff, and the EV charging-
-#     process billing block (consumption, cable loss/resistance, and the
-#     start/stop/tariff/intermediate/fiscal/hold/suspend counter snapshots).
+#   - T5/T6 measurements (spec §14.2 embedded decade exponent): one 32-bit word
+#     holding a signed 8-bit decade exponent in bits 31..24 and a 24-bit
+#     mantissa (unsigned for T5, signed for T6) in bits 23..0;
+#     value = mantissa * 10^exponent. Vendor example: FD01 E240 = 123456*10^-3
+#     = 123.456. Modeled as COMPOSED points with bit-windowed sub-mappings.
+#   - T7 power factor: [flags word][magnitude word] — bits 31..24 import/export
+#     sign (00/FF), bits 23..16 inductive/capacitive sign (00/FF), bits 15..0
+#     unsigned magnitude with 4 decimal places. The two words fall on register
+#     boundaries, so each PF is modeled as a scalar magnitude point (U16,
+#     scale 1/10000) plus a sign-flags point with §13.1 sub-fields.
+#   - Non-reset energy counters: T3 mantissa (30418..30425) with a separate T2
+#     decade exponent (30414..30417), pooled in interleaved ranges. Each total
+#     is a COMPOSED point whose parent window spans both pools (composed points
+#     may overlap each other, spec §14). Factory counter assignment: 1 = import
+#     active energy, 2 = export active energy, 3/4 = imported/exported squared-
+#     current accumulation for cable-loss calculation (quantity configurable
+#     via 40421+).
+#   - Coverage: device identification, instantaneous measurements (frequency,
+#     voltage, current, active/reactive/apparent power, power factor),
+#     non-reset energy totals, power-quality metrics (internal temperature,
+#     voltage/current THD), active tariff, and the EV charging-process billing
+#     block (consumption, cable loss/resistance, and the start/stop/tariff/
+#     intermediate/fiscal/hold/suspend counter snapshots).
+#   - Per-phase points are valid only in multi-phase connection modes; the
+#     phase_valid bitfield (30101) reports invalid phases.
 
 doc_id: iskra.wm3m4
 name: Iskra WM3M4 Three-Phase Energy Meter
@@ -142,6 +150,665 @@ devices:
             value_type: { primitive: UINT32 }
             mapping: { space: INPUT_REGISTER, offset: 405, length_words: 1, byte_order: BIG_ENDIAN }
 
+      # --- Instantaneous measurements (input registers, 30105..30171) -----
+      # T5/T6: embedded decade exponent (§14.2) — 24-bit mantissa + signed
+      # 8-bit exponent in one 32-bit word. T7 (power factor): flags word +
+      # magnitude word, split into two register-aligned points.
+      - block_id: instantaneous
+        name: Instantaneous Measurements (input registers)
+        space: INPUT_REGISTER
+        start_offset: 105
+        length_words: 67
+        points:
+          - point_id: frequency
+            name: Frequency
+            description: Grid frequency (T5)
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 105
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+
+          - point_id: voltage_l1
+            name: Voltage L1-N
+            description: Phase 1 to neutral voltage (T5)
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 107
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+
+          - point_id: voltage_l2
+            name: Voltage L2-N
+            description: Phase 2 to neutral voltage (T5), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 109
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+
+          - point_id: voltage_l3
+            name: Voltage L3-N
+            description: Phase 3 to neutral voltage (T5), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 111
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+
+          - point_id: voltage_l12
+            name: Voltage L1-L2
+            description: Line voltage between phases 1 and 2 (T5)
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 118
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_L2 }
+
+          - point_id: voltage_l23
+            name: Voltage L2-L3
+            description: Line voltage between phases 2 and 3 (T5)
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 120
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_L3 }
+
+          - point_id: voltage_l31
+            name: Voltage L3-L1
+            description: Line voltage between phases 3 and 1 (T5)
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 122
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_L1 }
+
+          - point_id: current_l1
+            name: Current L1
+            description: Phase 1 current (T5)
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 126
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1 }
+
+          - point_id: current_l2
+            name: Current L2
+            description: Phase 2 current (T5), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 128
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+
+          - point_id: current_l3
+            name: Current L3
+            description: Phase 3 current (T5), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 130
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+
+          - point_id: active_power_total
+            name: Active Power Total
+            description: Total active power Pt (T6, signed)
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 140
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: active_power_l1
+            name: Active Power L1
+            description: Phase 1 active power (T6, signed), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 142
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+
+          - point_id: active_power_l2
+            name: Active Power L2
+            description: Phase 2 active power (T6, signed), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 144
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+
+          - point_id: active_power_l3
+            name: Active Power L3
+            description: Phase 3 active power (T6, signed), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 146
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+
+          - point_id: reactive_power_total
+            name: Reactive Power Total
+            description: Total reactive power Qt (T6, signed)
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 148
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: var
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL }
+
+          - point_id: reactive_power_l1
+            name: Reactive Power L1
+            description: Phase 1 reactive power (T6, signed), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 150
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L1 }
+
+          - point_id: reactive_power_l2
+            name: Reactive Power L2
+            description: Phase 2 reactive power (T6, signed), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 152
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L2 }
+
+          - point_id: reactive_power_l3
+            name: Reactive Power L3
+            description: Phase 3 reactive power (T6, signed), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 154
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L3 }
+
+          - point_id: apparent_power_total
+            name: Apparent Power Total
+            description: Total apparent power St (T5)
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 156
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: VA
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL }
+
+          - point_id: apparent_power_l1
+            name: Apparent Power L1
+            description: Phase 1 apparent power (T5), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 158
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L1 }
+
+          - point_id: apparent_power_l2
+            name: Apparent Power L2
+            description: Phase 2 apparent power (T5), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 160
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L2 }
+
+          - point_id: apparent_power_l3
+            name: Apparent Power L3
+            description: Phase 3 apparent power (T5), multi-phase modes only
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 162
+              length_words: 2
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                mantissa: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: U32, bit_offset: 0, bit_length: 24 }
+                exponent: { offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S16, bit_offset: 24, bit_length: 8 }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L3 }
+
+          # T7 power factor pairs: [flags word][magnitude word]. The magnitude
+          # is the second register (4 decimal places); the flags word carries
+          # the import/export and inductive/capacitive signs (00/FF bytes).
+          - point_id: power_factor_total_signs
+            name: Power Factor Total Signs
+            description: PFt sign flags — import/export (high byte) and inductive/capacitive (low byte), 00/FF
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 164, length_words: 1, byte_order: BIG_ENDIAN }
+            fields:
+              - field_id: import_export
+                name: Import/Export Sign
+                bit_offset: 8
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: inductive_capacitive
+                name: Inductive/Capacitive Sign
+                bit_offset: 0
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+
+          - point_id: power_factor_total
+            name: Power Factor Total
+            description: Total power factor magnitude PFt (T7 low word, 4 decimals)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 165, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, aggregation: TOTAL }
+
+          - point_id: power_factor_l1_signs
+            name: Power Factor L1 Signs
+            description: PF1 sign flags — import/export (high byte) and inductive/capacitive (low byte), 00/FF
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 166, length_words: 1, byte_order: BIG_ENDIAN }
+            fields:
+              - field_id: import_export
+                name: Import/Export Sign
+                bit_offset: 8
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: inductive_capacitive
+                name: Inductive/Capacitive Sign
+                bit_offset: 0
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+
+          - point_id: power_factor_l1
+            name: Power Factor L1
+            description: Phase 1 power factor magnitude (T7 low word, 4 decimals), multi-phase modes only
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 167, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L1 }
+
+          - point_id: power_factor_l2_signs
+            name: Power Factor L2 Signs
+            description: PF2 sign flags — import/export (high byte) and inductive/capacitive (low byte), 00/FF
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 168, length_words: 1, byte_order: BIG_ENDIAN }
+            fields:
+              - field_id: import_export
+                name: Import/Export Sign
+                bit_offset: 8
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: inductive_capacitive
+                name: Inductive/Capacitive Sign
+                bit_offset: 0
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+
+          - point_id: power_factor_l2
+            name: Power Factor L2
+            description: Phase 2 power factor magnitude (T7 low word, 4 decimals), multi-phase modes only
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 169, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L2 }
+
+          - point_id: power_factor_l3_signs
+            name: Power Factor L3 Signs
+            description: PF3 sign flags — import/export (high byte) and inductive/capacitive (low byte), 00/FF
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 170, length_words: 1, byte_order: BIG_ENDIAN }
+            fields:
+              - field_id: import_export
+                name: Import/Export Sign
+                bit_offset: 8
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+              - field_id: inductive_capacitive
+                name: Inductive/Capacitive Sign
+                bit_offset: 0
+                bit_length: 8
+                value_type: { primitive: UINT32 }
+
+          - point_id: power_factor_l3
+            name: Power Factor L3
+            description: Phase 3 power factor magnitude (T7 low word, 4 decimals), multi-phase modes only
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 171, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L3 }
+
+      # --- Non-reset energy totals (input registers, 30414..30425) --------
+      # T3 mantissas (30418..30425) with pooled T2 decade exponents
+      # (30414..30417): each total is a composed point whose parent window
+      # spans both pools; sub-mapping offsets are window-relative (§14).
+      - block_id: energy_totals
+        name: Non-Reset Energy Totals (input registers)
+        space: INPUT_REGISTER
+        start_offset: 414
+        length_words: 12
+        points:
+          - point_id: energy_counter_1
+            name: Energy Counter 1 (Non-reset)
+            description: Import active energy total (factory counter 1 assignment); mantissa 30418 x 10^exponent 30414
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 414
+              length_words: 6
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                exponent: { offset: 0, length_words: 1, byte_order: BIG_ENDIAN, storage_type: S16 }
+                mantissa: { offset: 4, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32 }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME }
+
+          - point_id: energy_counter_2
+            name: Energy Counter 2 (Non-reset)
+            description: Export active energy total (factory counter 2 assignment); mantissa 30420 x 10^exponent 30415
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 415
+              length_words: 7
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                exponent: { offset: 0, length_words: 1, byte_order: BIG_ENDIAN, storage_type: S16 }
+                mantissa: { offset: 5, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32 }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME }
+
+          - point_id: energy_counter_3
+            name: Energy Counter 3 (Non-reset)
+            description: Imported squared-current accumulation for cable-loss calculation (factory counter 3 assignment); quantity configurable via 40421+
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 416
+              length_words: 8
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                exponent: { offset: 0, length_words: 1, byte_order: BIG_ENDIAN, storage_type: S16 }
+                mantissa: { offset: 6, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32 }
+
+          - point_id: energy_counter_4
+            name: Energy Counter 4 (Non-reset)
+            description: Exported squared-current accumulation for cable-loss calculation (factory counter 4 assignment); quantity configurable via 40421+
+            access: READ_ONLY
+            storage_type: COMPOSED
+            value_type: { primitive: DECIMAL }
+            mapping:
+              space: INPUT_REGISTER
+              offset: 417
+              length_words: 9
+              byte_order: BIG_ENDIAN
+              word_order: WORD_BIG_ENDIAN
+              composed:
+                kind: MANTISSA_EXPONENT
+                base: 10
+                exponent: { offset: 0, length_words: 1, byte_order: BIG_ENDIAN, storage_type: S16 }
+                mantissa: { offset: 7, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, storage_type: S32 }
+
       # --- Power quality (input registers, 30181..30190) ------------------
       - block_id: power_quality
         name: Power Quality (input registers)
@@ -221,10 +888,8 @@ devices:
             unit: "%"
 
       # --- EV charging-process billing block (holding registers) ----------
-      # The meter's non-reset energy total counters (30418..30425) store the
-      # value split across pooled mantissa (T3) and decade-exponent (T2)
-      # registers; the interleaved layout can't be modeled as separate composed
-      # points, so the exact per-session energy below is used instead.
+      # Exact per-session billing values; the lifetime totals live in the
+      # energy_totals block above.
       - block_id: ev_charging
         name: EV Charging Process (holding registers)
         space: HOLDING_REGISTER
