@@ -28,6 +28,18 @@
 #     and the manual's multi-step procedure (write metadata -> arm the status
 #     register -> poll until VALID -> read the OCMF string) is modeled as the
 #     start_transaction / stop_transaction commands (spec SS11.7, v0.5).
+#   - This meter emits a COMPLETE, self-contained OCMF string (model 64903,
+#     496 words) that needs no assembly: the commands return it directly.
+#     Contrast the Iskra WM3M4C, where the JSON dataset, its signature and
+#     the public key live in separate register windows that the caller must
+#     read and combine. Consumers of both meters cannot treat the signed
+#     result generically.
+#   - Meta1 is documented as "identification data for OCMF" (manual p.50) and
+#     the signed snapshot block captures read-only copies of Meta1-3 directly
+#     before the signature registers, so metadata written here is inside the
+#     signature. The meter takes it as free-form ASCII: serializing OCMF
+#     identification fields (IS/IT/ID/IF/IL) into that string is the caller's
+#     job and is deliberately outside this profile (see moddef#3).
 
 doc_id: bauer.bsm
 name: Bauer BSM Signing Energy Meter
@@ -730,6 +742,7 @@ devices:
     commands:
       - command_id: start_transaction
         name: Start Transaction
+        command_ref: ocmf:start_transaction
         description: Create and sign the turn-on (billing start) snapshot and fetch its OCMF representation
         params:
           - field: meta1
@@ -769,6 +782,7 @@ devices:
 
       - command_id: stop_transaction
         name: Stop Transaction
+        command_ref: ocmf:stop_transaction
         description: Create and sign the turn-off (billing end) snapshot and fetch its OCMF representation (metadata persists from start_transaction)
         steps:
           - name: arm

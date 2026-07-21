@@ -413,13 +413,14 @@ devices:
   profile: energy-meter/iskra-wm3m4/iskra-wm3m4.moddef.yaml
   transports:
   - MODBUS_RTU
-  points: 79
+  points: 87
   status: vendor-confirmed
   source: Iskra WM3M4/WM3M4C User's Manual Ver 2.13 (doc 22433950) — identification, instantaneous
     measurements (T5/T6 embedded decade exponent, spec §14.2; T7 power factor), non-reset energy
     totals (interleaved mantissa/exponent pools), power-quality metrics, tariff, the EV
-    charging-process billing block, and the signed billing transaction flow (§6.4 — length_ref-gated
-    Output Message, begin/end modeled as v0.5 commands, spec §11.7)
+    charging-process billing block, and the signed billing transaction flow (§6.4 — Output
+    Message, signature and public key registers per §6.5.20, begin/end modeled as v0.5
+    commands, spec §11.7; the length registers are byte counts returned to the caller)
   source_url: https://www.iskra.eu/f/docs/Smart-energy-meters/K_WM3M4_EN_22433950_Users_manual_Ver_2.13.pdf
   measurands:
   - frequency

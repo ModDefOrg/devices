@@ -38,10 +38,13 @@
 #     voltage/current THD), active tariff, and the EV charging-process billing
 #     block (consumption, cable loss/resistance, and the start/stop/tariff/
 #     intermediate/fiscal/hold/suspend counter snapshots), and the signed
-#     billing transaction flow (manual SS6.4): command/status/length/message
-#     registers as points (the Output Message read is gated by its live
-#     length via length_ref, spec SS11.7.1) and the begin/end procedure as
-#     the begin_transaction / end_transaction commands (spec SS11.7, v0.5).
+#     billing transaction flow (manual SS6.4): the command/status/length/
+#     message/signature/public-key registers as points, and the begin/end
+#     procedure as the begin_transaction / end_transaction commands (spec
+#     SS11.7, v0.5). The Output Message and Signature length registers are
+#     BYTE counts, so they are returned to the caller to truncate with
+#     rather than used as length_ref (which resolves to words) — see the
+#     signature block comment.
 #   - Per-phase points are valid only in multi-phase connection modes; the
 #     phase_valid bitfield (30101) reports invalid phases.
 
@@ -51,6 +54,14 @@ version: 1.0.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  - type_id: signature_format
+    name: Signature Format
+    description: Encoding of the signature register 48188 (manual table, register 47059)
+    values:
+      - { value: 0, name: ASN_1, description: Hex-encoded ASN.1 DER }
+      - { value: 1, name: BASE64, description: Base64 encoding }
 
 devices:
   - device_id: iskra-wm3m4
@@ -1102,14 +1113,24 @@ devices:
       # The signature flow exchanges variable-length messages through the
       # holding-register file at 47100+ (input) / 47612+ (output), gated by
       # the Command Register (47051, command char in the high byte) and the
-      # Signature Status register (47052, 15 = signature OK). The Output
-      # Message length is only known at runtime from 47057 — modeled with
-      # length_ref (spec SS11.7.1).
+      # Signature Status register (47052, 15 = signature OK). Register map
+      # per manual SS6.5.20 (table 18): 47100-47611 input, 47612-48123 output
+      # (JSON), 48124-48155 public key (raw), 48156-48187 signature (raw),
+      # 48188-48315 signature (ASN.1/Base64 per signature_format).
+      #
+      # LENGTH UNITS: 47057 (Output Message Length) and 47058 (Signature
+      # Length) are BYTE counts, not register counts — manual SS6.5.13 calls
+      # 47057 the "size of JSON output billing dataset", and the reference
+      # implementation reads ceil(n/2) registers then truncates to n bytes.
+      # `length_ref` (spec SS11.7.1) resolves to a *word* count, so it cannot
+      # express these: the message and signature points therefore declare
+      # their full fixed windows and the caller truncates using the byte
+      # lengths returned by the command.
       - block_id: signature
         name: Signed Billing Transaction
         space: HOLDING_REGISTER
         start_offset: 7051
-        length_words: 1073
+        length_words: 1265
         points:
           - point_id: command_register
             name: Command Register
@@ -1129,6 +1150,32 @@ devices:
             value_type: { primitive: UINT32 }
             mapping: { space: HOLDING_REGISTER, offset: 7052, length_words: 1, byte_order: BIG_ENDIAN }
 
+          # Manual SS6.4 step 1 / SS6.5.5: time, timezone and signature format
+          # must be set before the 'B' command. Time is caller-supplied (no
+          # clock in ModDef), so these are exposed as writable points rather
+          # than command steps.
+          - point_id: timezone_offset
+            name: Time Zone Offset
+            description: Offset in minutes from UTC (manual SS6.5.5)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            unit: min
+            mapping: { space: HOLDING_REGISTER, offset: 7053, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+
+          - point_id: datetime_sync
+            name: Date and Time Synchronization
+            description: Unix timestamp (47054 high 16 bits, 47055 low); UTC or local per register 47073. Time cannot be changed during charging
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            unit: s
+            mapping: { space: HOLDING_REGISTER, offset: 7054, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+
           - point_id: input_message_length
             name: Input Message Length
             description: Length of the billing dataset written to the input message area
@@ -1141,11 +1188,37 @@ devices:
 
           - point_id: output_message_length
             name: Output Message Length
-            description: Live register count of the signed output message (gates the output_message read)
+            description: Size in BYTES of the signed JSON output message (manual SS6.5.13); the caller truncates output_message to this length
             access: READ_ONLY
             storage_type: U16
             value_type: { primitive: UINT32 }
             mapping: { space: HOLDING_REGISTER, offset: 7057, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: signature_length
+            name: Signature Length
+            description: Size in BYTES of the signature at 48188 (manual SS6.5.15); the caller truncates signature to this length
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7058, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: signature_format
+            name: Signature Format
+            description: Encoding of the signature register; must be set before signing (manual SS6.5.15)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: signature_format } }
+            mapping: { space: HOLDING_REGISTER, offset: 7059, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+
+          - point_id: signature_algorithm
+            name: Signature Algorithm
+            description: Signing algorithm reported by the meter (0 = signing not supported)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7060, length_words: 1, byte_order: BIG_ENDIAN }
 
           - point_id: input_message
             name: Input Message
@@ -1159,22 +1232,61 @@ devices:
 
           - point_id: output_message
             name: Output Message
-            description: Signed output message (billing dataset + signature); effective length from output_message_length
+            description: Signed JSON billing dataset (47612-48123); valid prefix is output_message_length BYTES — the caller must truncate
             access: READ_ONLY
             storage_type: BYTES_RAW
             value_type: { primitive: BYTES }
-            mapping: { space: HOLDING_REGISTER, offset: 7612, length_words: 512, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, length_ref: { point_id: output_message_length } }
+            mapping: { space: HOLDING_REGISTER, offset: 7612, length_words: 512, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          # Manual SS6.3.6: the dataset and its signature are separate reads
+          # and "should be read in sequence and stored together before a new
+          # transaction command is executed". Unlike the Bauer BSM (which
+          # emits a complete self-contained OCMF string), a consumer of this
+          # meter must assemble OCMF from output_message + signature +
+          # public_key.
+          - point_id: public_key
+            name: Public Key
+            description: ECDSA NIST P-256 public key, 64 bytes raw (48124-48155). For Transparenzsoftware prepend the DER header 3059301306072A8648CE3D020106082A8648CE3D03010703420004
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 8124, length_words: 32, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: signature_raw
+            name: Signature (raw)
+            description: ECDSA signature in raw form, 64 bytes (48156-48187)
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 8156, length_words: 32, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+          - point_id: signature
+            name: Signature
+            description: ECDSA signature over the billing dataset (48188-48315), encoded per signature_format; valid prefix is signature_length BYTES
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 8188, length_words: 128, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
 
     # --- Signed billing transaction procedures (spec SS11.7) ----------------
-    # Manual SS6.4: write the billing dataset and its length, command 'B'
-    # (0x4200) to begin; command 'E' (0x4500) to end, poll Signature Status
-    # until 15 (signature OK), then read the output message at its live
-    # length. Params re-declare the input-area register windows as caller
-    # inputs; step order is wire order.
+    # Manual SS6.4 gives the full procedure. These commands cover steps 2-4
+    # (begin) and 8-14 (end). Deliberately NOT modeled, because ModDef
+    # commands are strictly linear with no branching or clock:
+    #   - step 1 (set time / timezone / signature format) — time is
+    #     caller-supplied; write datetime_sync, timezone_offset and
+    #     signature_format before calling begin_transaction.
+    #   - steps 5-7 (intermediate reading, fiscal reading, tariff change) —
+    #     optional, not required for a plain billing transaction.
+    #   - state-machine pre-checks and power-failure recovery (SS6.6): the
+    #     reference implementation inspects the charging state and may abort
+    #     a stuck transaction before beginning, which needs branching.
+    # Params re-declare the input-area register windows as caller inputs;
+    # step order is wire order.
     commands:
       - command_id: begin_transaction
         name: Begin Transaction
-        description: Write the billing dataset and start a signed billing transaction ('B')
+        command_ref: ocmf:start_transaction
+        description: Write the billing dataset and start a signed billing transaction ('B'); set datetime_sync, timezone_offset and signature_format first (manual SS6.4 step 1)
         params:
           - field: dataset
             storage_type: BYTES_RAW
@@ -1200,7 +1312,8 @@ devices:
 
       - command_id: end_transaction
         name: End Transaction
-        description: End the signed billing transaction ('E'), wait for the signature, and fetch the signed output message
+        command_ref: ocmf:stop_transaction
+        description: End the signed billing transaction ('E'), wait for the signature, then fetch the signed output message, its signature and the public key (manual SS6.4 steps 8-14)
         steps:
           - name: end
             write: { trigger: { point_id: command_register, value: 0x4500 } }
@@ -1214,10 +1327,27 @@ devices:
             read: { point_id: output_message_length, into: length }
           - name: fetch_message
             read: { point_id: output_message, into: message }
+          - name: fetch_signature_length
+            read: { point_id: signature_length, into: signature_length }
+          - name: fetch_signature
+            read: { point_id: signature, into: signature }
+          - name: fetch_public_key
+            read: { point_id: public_key, into: public_key }
         results:
+          # length / signature_length are BYTE counts: truncate message and
+          # signature to them before use (see the block comment above).
           - field: message
             from: message
             value_type: { primitive: BYTES }
           - field: length
             from: length
             value_type: { primitive: UINT32 }
+          - field: signature
+            from: signature
+            value_type: { primitive: BYTES }
+          - field: signature_length
+            from: signature_length
+            value_type: { primitive: UINT32 }
+          - field: public_key
+            from: public_key
+            value_type: { primitive: BYTES }
