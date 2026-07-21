@@ -62,6 +62,8 @@ shakes out bugs in the stdlib and the codec before the registry grows.
 | Measurand qualifiers (phase/direction/aggregation/location/accumulation) | across the set |
 | Modbus TCP + `default_unit_id` + overlay block | Victron Venus OS |
 | Composed mantissa/exponent (§14) incl. embedded decade exponent (§14.2) | Iskra WM3M4 |
+| Multi-step command procedures (§11.7): params, trigger writes, poll conditions | Bauer BSM, Iskra WM3M4 |
+| Dynamic read length (`length_ref`, §11.7.1) | Iskra WM3M4 |
 
 Patterns these profiles don't reach yet (`COIL`/`DISCRETE_INPUT`,
 `selector_ref`, repeating arrays with a stride, `BCD`, `U24/U48`) are covered

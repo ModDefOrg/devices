@@ -20,11 +20,14 @@
 #   - int16 measurements use the SunSpec "not implemented" sentinel 0x8000
 #     (-32768); acc32 energy uses 0.
 #   - Coverage: the Common model (1, identification), the AC Meter model (203,
-#     the full three-phase electrical measurement set), and the scalar fields of
-#     the custom Signing Meter model (64900: meter/module identity, real energy
-#     since turn-on, counters, time, digital I/O). The binary signature/OCMF
-#     snapshot models (64901/64902/64903) are containers for signed blobs rather
-#     than telemetry and are intentionally not modeled as points.
+#     the full three-phase electrical measurement set), the scalar fields and
+#     snapshot metadata of the custom Signing Meter model (64900: meter/module
+#     identity, real energy since turn-on, counters, time, digital I/O,
+#     Meta1-3), and the signed turn-on/turn-off snapshot flow: the snapshot
+#     status registers and OCMF string representations are modeled as points,
+#     and the manual's multi-step procedure (write metadata -> arm the status
+#     register -> poll until VALID -> read the OCMF string) is modeled as the
+#     start_transaction / stop_transaction commands (spec SS11.7, v0.5).
 
 doc_id: bauer.bsm
 name: Bauer BSM Signing Energy Meter
@@ -32,6 +35,18 @@ version: 1.0.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  - type_id: snapshot_status
+    name: Snapshot Status
+    description: Status of a signed snapshot (models 64901-64903), manual appendix A
+    values:
+      - { value: 0, name: VALID, description: Snapshot created and signed successfully }
+      - { value: 1, name: INVALID, description: Snapshot invalid }
+      - { value: 2, name: UPDATING, description: Snapshot creation/signing in progress (written to trigger) }
+      - { value: 3, name: FAILED_GENERAL, description: Snapshot creation failed (general error) }
+      - { value: 4, name: FAILED_NO_CHARGE_RELEASE, description: Failed - no charge release }
+      - { value: 5, name: FAILED_CONTACTOR_FEEDBACK, description: Failed - incorrect contactor feedback }
 
 devices:
   - device_id: bauer-bsm
@@ -464,10 +479,10 @@ devices:
 
       # --- Custom Signing Meter model (64900): scalar fields --------------
       - block_id: signing_meter
-        name: Signing Meter (model 64900, scalar fields)
+        name: Signing Meter (model 64900, scalar fields + metadata)
         space: HOLDING_REGISTER
         start_offset: 40199
-        length_words: 70
+        length_words: 250
         points:
           - point_id: error_code_meter
             name: Error Code Meter
@@ -608,3 +623,165 @@ devices:
             mapping: { space: HOLDING_REGISTER, offset: 40268, length_words: 1, byte_order: BIG_ENDIAN }
             write:
               behavior: DIRECT
+
+          # Operator metadata written before creating a signed snapshot
+          # (manual: Meta1/Meta2/Meta3, model 64900). Meta1 conventionally
+          # carries the charge-point identification the OCMF dataset embeds.
+          - point_id: meta1
+            name: Metadata 1
+            description: Snapshot metadata string 1 (charge-point identification), written before a snapshot
+            access: READ_WRITE
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40279, length_words: 70, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+            write:
+              behavior: DIRECT
+
+          - point_id: meta2
+            name: Metadata 2
+            description: Snapshot metadata string 2, written before a snapshot
+            access: READ_WRITE
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40349, length_words: 50, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+            write:
+              behavior: DIRECT
+
+          - point_id: meta3
+            name: Metadata 3
+            description: Snapshot metadata string 3, written before a snapshot
+            access: READ_WRITE
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40399, length_words: 50, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+            write:
+              behavior: DIRECT
+
+      # --- Signed turn-on snapshot (model 64902): status register ---------
+      - block_id: snapshot_start
+        name: Signed Turn-On Snapshot (status)
+        space: HOLDING_REGISTER
+        start_offset: 41286
+        length_words: 1
+        points:
+          - point_id: snapshot_status_start
+            name: Turn-On Snapshot Status
+            description: Write 2 (UPDATING) to create+sign the turn-on snapshot; poll until VALID (0) or an error code
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: snapshot_status } }
+            mapping: { space: HOLDING_REGISTER, offset: 41286, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: COMMAND_TRIGGER
+
+      # --- Signed turn-off snapshot (model 64903): status register --------
+      - block_id: snapshot_end
+        name: Signed Turn-Off Snapshot (status)
+        space: HOLDING_REGISTER
+        start_offset: 41540
+        length_words: 1
+        points:
+          - point_id: snapshot_status_end
+            name: Turn-Off Snapshot Status
+            description: Write 2 (UPDATING) to create+sign the turn-off snapshot; poll until VALID (0) or an error code
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: snapshot_status } }
+            mapping: { space: HOLDING_REGISTER, offset: 41540, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: COMMAND_TRIGGER
+
+      # --- OCMF turn-on/turn-off snapshot representations ------------------
+      # The model's ID sub-word at +0 is not independently useful; the
+      # string is addressed directly (+4 from the model base).
+      - block_id: ocmf_start
+        name: OCMF Turn-On Snapshot (string)
+        space: HOLDING_REGISTER
+        start_offset: 43295
+        length_words: 496
+        points:
+          - point_id: ocmf_start
+            name: OCMF Turn-On Snapshot
+            description: OCMF representation of the signed turn-on snapshot (JSON payload + signature)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 43295, length_words: 496, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+      - block_id: ocmf_end
+        name: OCMF Turn-Off Snapshot (string)
+        space: HOLDING_REGISTER
+        start_offset: 43795
+        length_words: 496
+        points:
+          - point_id: ocmf_end
+            name: OCMF Turn-Off Snapshot
+            description: OCMF representation of the signed turn-off snapshot (JSON payload + signature)
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 43795, length_words: 496, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+
+    # --- Signed transaction procedures (spec §11.7) ------------------------
+    # The manual's OCMF flow: write the operator metadata, write 2 ("update")
+    # to the snapshot status register, poll it until VALID (0), then read the
+    # OCMF string. Params re-declare the meta1-3 register windows as caller
+    # inputs; step order is wire order.
+    commands:
+      - command_id: start_transaction
+        name: Start Transaction
+        description: Create and sign the turn-on (billing start) snapshot and fetch its OCMF representation
+        params:
+          - field: meta1
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40279, length_words: 70, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+            required: true
+          - field: meta2
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40349, length_words: 50, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+          - field: meta3
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 40399, length_words: 50, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+        steps:
+          - name: write_meta1
+            write: { param: meta1 }
+          - name: write_meta2
+            write: { param: meta2 }
+          - name: write_meta3
+            write: { param: meta3 }
+          - name: arm
+            write: { trigger: { point_id: snapshot_status_start, value: 2 } }
+          - name: wait_valid
+            poll:
+              point_id: snapshot_status_start
+              until: { op: EQ, value: 0 }
+              interval_ms: 500
+              timeout_ms: 15000
+          - name: fetch
+            read: { point_id: ocmf_start, into: ocmf }
+        results:
+          - field: ocmf
+            from: ocmf
+            value_type: { primitive: STRING }
+
+      - command_id: stop_transaction
+        name: Stop Transaction
+        description: Create and sign the turn-off (billing end) snapshot and fetch its OCMF representation (metadata persists from start_transaction)
+        steps:
+          - name: arm
+            write: { trigger: { point_id: snapshot_status_end, value: 2 } }
+          - name: wait_valid
+            poll:
+              point_id: snapshot_status_end
+              until: { op: EQ, value: 0 }
+              interval_ms: 500
+              timeout_ms: 15000
+          - name: fetch
+            read: { point_id: ocmf_end, into: ocmf }
+        results:
+          - field: ocmf
+            from: ocmf
+            value_type: { primitive: STRING }

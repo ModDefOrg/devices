@@ -37,7 +37,11 @@
 #     non-reset energy totals, power-quality metrics (internal temperature,
 #     voltage/current THD), active tariff, and the EV charging-process billing
 #     block (consumption, cable loss/resistance, and the start/stop/tariff/
-#     intermediate/fiscal/hold/suspend counter snapshots).
+#     intermediate/fiscal/hold/suspend counter snapshots), and the signed
+#     billing transaction flow (manual SS6.4): command/status/length/message
+#     registers as points (the Output Message read is gated by its live
+#     length via length_ref, spec SS11.7.1) and the begin/end procedure as
+#     the begin_transaction / end_transaction commands (spec SS11.7, v0.5).
 #   - Per-phase points are valid only in multi-phase connection modes; the
 #     phase_valid bitfield (30101) reports invalid phases.
 
@@ -1093,3 +1097,127 @@ devices:
             mapping: { space: HOLDING_REGISTER, offset: 7047, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
             unit: Wh
             measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: SESSION }
+
+      # --- Signed billing transaction (manual SS6.4) ------------------------
+      # The signature flow exchanges variable-length messages through the
+      # holding-register file at 47100+ (input) / 47612+ (output), gated by
+      # the Command Register (47051, command char in the high byte) and the
+      # Signature Status register (47052, 15 = signature OK). The Output
+      # Message length is only known at runtime from 47057 — modeled with
+      # length_ref (spec SS11.7.1).
+      - block_id: signature
+        name: Signed Billing Transaction
+        space: HOLDING_REGISTER
+        start_offset: 7051
+        length_words: 1073
+        points:
+          - point_id: command_register
+            name: Command Register
+            description: Transaction command; the high byte carries the command character ('B' begin, 'E' end)
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7051, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: COMMAND_TRIGGER
+
+          - point_id: signature_status
+            name: Signature Status
+            description: Signature engine status; 15 = signature OK, other values are vendor progress/error codes
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7052, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: input_message_length
+            name: Input Message Length
+            description: Length of the billing dataset written to the input message area
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7056, length_words: 1, byte_order: BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+
+          - point_id: output_message_length
+            name: Output Message Length
+            description: Live register count of the signed output message (gates the output_message read)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7057, length_words: 1, byte_order: BIG_ENDIAN }
+
+          - point_id: input_message
+            name: Input Message
+            description: Billing dataset input area for the signature flow, written before 'B'/'E' commands
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 7100, length_words: 512, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            write:
+              behavior: DIRECT
+
+          - point_id: output_message
+            name: Output Message
+            description: Signed output message (billing dataset + signature); effective length from output_message_length
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 7612, length_words: 512, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, length_ref: { point_id: output_message_length } }
+
+    # --- Signed billing transaction procedures (spec SS11.7) ----------------
+    # Manual SS6.4: write the billing dataset and its length, command 'B'
+    # (0x4200) to begin; command 'E' (0x4500) to end, poll Signature Status
+    # until 15 (signature OK), then read the output message at its live
+    # length. Params re-declare the input-area register windows as caller
+    # inputs; step order is wire order.
+    commands:
+      - command_id: begin_transaction
+        name: Begin Transaction
+        description: Write the billing dataset and start a signed billing transaction ('B')
+        params:
+          - field: dataset
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 7100, length_words: 512, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            required: true
+          - field: dataset_length
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 7056, length_words: 1, byte_order: BIG_ENDIAN }
+            required: true
+        steps:
+          - name: write_dataset
+            write: { param: dataset }
+          - name: write_length
+            write: { param: dataset_length }
+          - name: begin
+            write: { trigger: { point_id: command_register, value: 0x4200 } }
+        results:
+          - field: status
+            from: signature_status
+            value_type: { primitive: UINT32 }
+
+      - command_id: end_transaction
+        name: End Transaction
+        description: End the signed billing transaction ('E'), wait for the signature, and fetch the signed output message
+        steps:
+          - name: end
+            write: { trigger: { point_id: command_register, value: 0x4500 } }
+          - name: wait_signed
+            poll:
+              point_id: signature_status
+              until: { op: EQ, value: 15 }
+              interval_ms: 1000
+              timeout_ms: 30000
+          - name: fetch_length
+            read: { point_id: output_message_length, into: length }
+          - name: fetch_message
+            read: { point_id: output_message, into: message }
+        results:
+          - field: message
+            from: message
+            value_type: { primitive: BYTES }
+          - field: length
+            from: length
+            value_type: { primitive: UINT32 }
