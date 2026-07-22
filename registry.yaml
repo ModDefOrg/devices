@@ -522,6 +522,34 @@ devices:
   - energy_active
   - energy_reactive
   - energy_apparent
+- vendor: Carlo Gavazzi
+  model: EM580 (three-phase, Eichrecht signing meter for EV chargers)
+  category: energy-meter
+  doc_id: carlogavazzi.em580
+  profile: energy-meter/carlo-gavazzi-em580/carlo-gavazzi-em580.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 76
+  status: vendor-confirmed
+  source: Carlo Gavazzi EM580 Modbus Communication Protocol, public version 1.11 (EM580_CPP.pdf) —
+    section 4.1 instantaneous variables, the section 4.4 signed map (OBIS-coded billing energies +
+    ECDSA signature) and signature type/public key, and the full section 4.4 OCMF charging-session
+    flow. Unlike the Bauer BSM and Iskra WM3M4C, the EM580 exposes every OCMF identification field as
+    a typed register, so start_transaction/stop_transaction bind params one-to-one with no caller-side
+    payload composition (spec §11.7). Register map cross-checked against the EVerest CarloGavazzi_EM580
+    driver constants.
+  source_url: https://www.gavazziautomation.com/fileadmin/images/PIM/OTHERSTUFF/COMPRO/EM580_CPP.pdf
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - apparent_power
+  - reactive_power
+  - power_factor
+  - frequency
+  - energy_active
+  - energy_reactive
+  - energy_apparent
 - vendor: Sigenergy
   model: SigenStor / Sigen Hybrid (hybrid ESS)
   category: battery-storage

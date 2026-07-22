@@ -1,0 +1,1049 @@
+# Source: Carlo Gavazzi EM580 Modbus Communication Protocol, Public version 1.11
+# (EM580_CPP.pdf), section 4. The EM580 is Carlo Gavazzi's AC energy meter for
+# Eichrecht-certified EV chargers: it produces a signed OCMF file (S.A.F.E.
+# standard) over its RS485 Modbus RTU interface.
+# https://www.gavazziautomation.com/fileadmin/images/PIM/OTHERSTUFF/COMPRO/EM580_CPP.pdf
+# Register map confirmed against the vendor document and cross-checked against the
+# EVerest CarloGavazzi_EM580 driver's register constants; not hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# WHY THIS METER MATTERS (OCMF as typed registers):
+#   Unlike the Bauer BSM (one opaque OCMF string) and the Iskra WM3M4C (one opaque
+#   OCMF-JSON blob the caller must serialize), the EM580 exposes EVERY OCMF
+#   TransactionReq field as its own typed Modbus register: identification status
+#   (7000h), level (7001h), the four flag groups (7002h-7005h), type (7006h),
+#   data (7007h), charge-point id + type (701Ch/701Bh), transaction id (6F01h)
+#   and tariff text (6900h). The meter itself composes the signed OCMF file from
+#   these fields. This is the counter-example anticipated when moddef#3 was
+#   closed: on this meter the start_transaction params bind one-to-one to
+#   registers with no caller-side payload composition, so command_ref carries a
+#   genuine (still unvalidated) role tag.
+#
+# Encoding notes (from the vendor protocol document):
+#   - Measured variables live in the read-only register space, read with Modbus
+#     function code 03 or 04 (used interchangeably per the doc). The OCMF /
+#     charging-session registers are read/write (FC03/06/10), i.e. holding
+#     registers. Physical (word) addresses are given in hex and map directly to
+#     the ModDef offset: 0000h -> 0, 7000h -> 28672 (= Modicom 328673 - 300001).
+#   - Numeric formats are scaled two's-complement integers. Within a word the
+#     byte order is MSB->LSB (BIG_ENDIAN). For multi-word NUMERIC values the word
+#     order is LSW->MSW (WORD_LITTLE_ENDIAN) per the vendor data-format section.
+#     Multi-word CHAR/OCMF fields are plain byte streams: word 0 first, MSB first
+#     (WORD_BIG_ENDIAN). The INT64 timestamp/energy word order in particular is
+#     the vendor's stated convention and should be re-checked on hardware.
+#   - Each numeric variable carries a "value weight" (Volt*10, Ampere*1000,
+#     Watt*10, ...); transform.scale reverses it so decoded values are canonical.
+#   - Power factor sign follows the IEC convention (negative when active power is
+#     exported).
+#   - Coverage: the section 4.1 instantaneous variables, the section 4.4 signed
+#     map (OBIS-coded billing energies + vendor ECDSA signature), the signature
+#     type / public key, device identity, and the full section 4.4 OCMF charging
+#     session flow modeled as start_transaction / stop_transaction commands
+#     (spec SS11.7, v0.5). The maintenance-mode cable-loss procedure and the
+#     display/custom-string configuration registers are out of scope.
+
+doc_id: carlogavazzi.em580
+name: Carlo Gavazzi EM580 Signing Energy Meter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+# OCMF enums. Values mirror the EM580 register tables, which in turn mirror the
+# OCMF specification and EVerest's powermeter types (OCMFIdentificationLevel /
+# Flags / Type / UserIdentificationStatus).
+enums:
+  - type_id: ocmf_identification_status
+    name: OCMF Identification Status
+    description: OCMF IS field (7000h); whether a user assignment is present
+    values:
+      - { value: 0, name: NOT_ASSIGNED, description: "False: no user assignment" }
+      - { value: 1, name: ASSIGNED, description: "True: user successfully assigned" }
+
+  - type_id: ocmf_identification_level
+    name: OCMF Identification Level
+    description: OCMF IL field (7001h); overall status of the user assignment
+    values:
+      - { value: 0, name: NONE }
+      - { value: 1, name: HEARSAY }
+      - { value: 2, name: TRUSTED }
+      - { value: 3, name: VERIFIED }
+      - { value: 4, name: CERTIFIED }
+      - { value: 5, name: SECURE }
+      - { value: 6, name: MISMATCH }
+      - { value: 7, name: INVALID }
+      - { value: 8, name: OUTDATED }
+      - { value: 9, name: UNKNOWN }
+
+  - type_id: ocmf_identification_flags_rfid
+    name: OCMF Identification Flags (RFID)
+    description: OCMF IF group 1 (7002h)
+    values:
+      - { value: 0, name: RFID_NONE }
+      - { value: 1, name: RFID_PLAIN }
+      - { value: 2, name: RFID_RELATED }
+      - { value: 3, name: RFID_PSK }
+
+  - type_id: ocmf_identification_flags_ocpp
+    name: OCMF Identification Flags (OCPP)
+    description: OCMF IF group 2 (7003h)
+    values:
+      - { value: 0, name: OCPP_NONE }
+      - { value: 1, name: OCPP_RS }
+      - { value: 2, name: OCPP_AUTH }
+      - { value: 3, name: OCPP_RS_TLS }
+      - { value: 4, name: OCPP_AUTH_TLS }
+      - { value: 5, name: OCPP_CACHE }
+      - { value: 6, name: OCPP_WHITELIST }
+      - { value: 7, name: OCPP_CERTIFIED }
+
+  - type_id: ocmf_identification_flags_iso15118
+    name: OCMF Identification Flags (ISO 15118)
+    description: OCMF IF group 3 (7004h)
+    values:
+      - { value: 0, name: ISO15118_NONE }
+      - { value: 1, name: ISO15118_PNC }
+
+  - type_id: ocmf_identification_flags_plmn
+    name: OCMF Identification Flags (PLMN)
+    description: OCMF IF group 4 (7005h)
+    values:
+      - { value: 0, name: PLMN_NONE }
+      - { value: 1, name: PLMN_RING }
+      - { value: 2, name: PLMN_SMS }
+
+  - type_id: ocmf_identification_type
+    name: OCMF Identification Type
+    description: OCMF IT field (7006h); type of identification data
+    values:
+      - { value: 0, name: NONE }
+      - { value: 1, name: DENIED }
+      - { value: 2, name: UNDEFINED }
+      - { value: 10, name: ISO14443 }
+      - { value: 11, name: ISO15693 }
+      - { value: 20, name: EMAID }
+      - { value: 21, name: EVCCID }
+      - { value: 30, name: EVCOID }
+      - { value: 40, name: ISO7812 }
+      - { value: 50, name: CARD_TXN_NR }
+      - { value: 60, name: CENTRAL }
+      - { value: 61, name: CENTRAL_1 }
+      - { value: 62, name: CENTRAL_2 }
+      - { value: 70, name: LOCAL }
+      - { value: 71, name: LOCAL_1 }
+      - { value: 72, name: LOCAL_2 }
+      - { value: 80, name: PHONE_NUMBER }
+      - { value: 90, name: KEY_CODE }
+
+  - type_id: ocmf_charging_point_id_type
+    name: OCMF Charging Point Identifier Type
+    description: OCMF CT field (701Bh)
+    values:
+      - { value: 0, name: EVSEID }
+      - { value: 1, name: CBIDC }
+
+  - type_id: ocmf_command
+    name: OCMF Command
+    description: Transaction command written to 7040h (ASCII code in a UINT16)
+    values:
+      - { value: 0x41, name: ABORT, description: "'A': abort transaction" }
+      - { value: 0x42, name: BEGIN, description: "'B': start transaction" }
+      - { value: 0x45, name: END, description: "'E': end transaction" }
+
+  - type_id: ocmf_charging_status
+    name: OCMF Charging Status
+    description: Charging session status (7045h)
+    values:
+      - { value: 0, name: NO_CHARGING }
+      - { value: 1, name: CHARGING }
+      - { value: 2, name: END_LAST_TRANSACTION }
+      - { value: 3, name: END_LAST_TRANSACTION_WITH_ERROR }
+
+  - type_id: ocmf_state
+    name: OCMF File State
+    description: State of the last-transaction OCMF file (7100h)
+    values:
+      - { value: 0, name: NOT_READY }
+      - { value: 1, name: RUNNING }
+      - { value: 2, name: READY }
+      - { value: 3, name: SAVED_FILE_CORRUPTED }
+
+  - type_id: transaction_id_method
+    name: Transaction ID Method
+    description: How the transaction id is generated (6F00h)
+    values:
+      - { value: 0, name: AUTOMATIC, description: "Automatically generated by the EM580" }
+      - { value: 1, name: EXTERNAL, description: "Written by the controller into 6F01h" }
+
+  - type_id: session_modality
+    name: Charging Session Modality
+    description: Displayed charging direction (7036h)
+    values:
+      - { value: 0, name: CHARGING_VEHICLE }
+      - { value: 1, name: VEHICLE_TO_GRID }
+      - { value: 2, name: BIDIRECTIONAL }
+
+  - type_id: time_sync_status
+    name: Time Synchronization Status
+    description: Clock synchronization state (7060h)
+    values:
+      - { value: 0, name: NOT_SYNCHRONIZED }
+      - { value: 1, name: SYNCHRONIZED }
+
+  - type_id: signature_type
+    name: Signature Type
+    description: Cryptographic signature length of the signed map (24FFh)
+    values:
+      - { value: 0, name: ECDSA_256 }
+      - { value: 1, name: ECDSA_384 }
+      - { value: 2, name: NONE }
+
+devices:
+  - device_id: carlo-gavazzi-em580
+    vendor: Carlo Gavazzi
+    model: EM580
+    supported_transports:
+      - MODBUS_RTU
+    blocks:
+      # --- Instantaneous variables (Table 4.1, read FC03/FC04) ---------------
+      - block_id: measurements
+        name: Instantaneous Variables and Meters
+        space: INPUT_REGISTER
+        length_words: 88
+        points:
+          - point_id: voltage_l1_n
+            name: Voltage L1-N
+            description: Phase 1 line-to-neutral RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+          - point_id: voltage_l2_n
+            name: Voltage L2-N
+            description: Phase 2 line-to-neutral RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 2, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+          - point_id: voltage_l3_n
+            name: Voltage L3-N
+            description: Phase 3 line-to-neutral RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 4, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+          - point_id: voltage_l1_l2
+            name: Voltage L1-L2
+            description: L1-L2 line-to-line RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 6, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_L2 }
+          - point_id: voltage_l2_l3
+            name: Voltage L2-L3
+            description: L2-L3 line-to-line RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 8, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_L3 }
+          - point_id: voltage_l3_l1
+            name: Voltage L3-L1
+            description: L3-L1 line-to-line RMS voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 10, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_L1 }
+          - point_id: current_l1
+            name: Current L1
+            description: Phase 1 RMS current
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 12, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1 }
+          - point_id: current_l2
+            name: Current L2
+            description: Phase 2 RMS current
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 14, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+          - point_id: current_l3
+            name: Current L3
+            description: Phase 3 RMS current
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 16, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+          - point_id: active_power_l1
+            name: Active Power L1
+            description: Phase 1 active power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 18, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+          - point_id: active_power_l2
+            name: Active Power L2
+            description: Phase 2 active power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 20, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+          - point_id: active_power_l3
+            name: Active Power L3
+            description: Phase 3 active power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 22, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+          - point_id: apparent_power_l1
+            name: Apparent Power L1
+            description: Phase 1 apparent power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 24, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L1 }
+          - point_id: apparent_power_l2
+            name: Apparent Power L2
+            description: Phase 2 apparent power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 26, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L2 }
+          - point_id: apparent_power_l3
+            name: Apparent Power L3
+            description: Phase 3 apparent power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 28, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, phase_ref: L3 }
+          - point_id: reactive_power_l1
+            name: Reactive Power L1
+            description: Phase 1 reactive power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 30, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L1 }
+          - point_id: reactive_power_l2
+            name: Reactive Power L2
+            description: Phase 2 reactive power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 32, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L2 }
+          - point_id: reactive_power_l3
+            name: Reactive Power L3
+            description: Phase 3 reactive power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 34, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, phase_ref: L3 }
+          - point_id: voltage_ln_sys
+            name: Voltage L-N system
+            description: System line-to-neutral voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 36, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, aggregation: AVERAGE }
+          - point_id: voltage_ll_sys
+            name: Voltage L-L system
+            description: System line-to-line voltage
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 38, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            measurand: { base_quantity: voltage, aggregation: AVERAGE }
+          - point_id: active_power_sys
+            name: Active Power system
+            description: System active power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 40, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+          - point_id: apparent_power_sys
+            name: Apparent Power system
+            description: System apparent power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 42, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: VA
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL }
+          - point_id: reactive_power_sys
+            name: Reactive Power system
+            description: System reactive power
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 44, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: var
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL }
+          - point_id: power_factor_l1
+            name: Power Factor L1
+            description: Phase 1 power factor (IEC sign convention)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 46, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            measurand: { base_quantity: power_factor, phase_ref: L1 }
+          - point_id: power_factor_l2
+            name: Power Factor L2
+            description: Phase 2 power factor (IEC sign convention)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 47, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            measurand: { base_quantity: power_factor, phase_ref: L2 }
+          - point_id: power_factor_l3
+            name: Power Factor L3
+            description: Phase 3 power factor (IEC sign convention)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 48, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            measurand: { base_quantity: power_factor, phase_ref: L3 }
+          - point_id: power_factor_sys
+            name: Power Factor system
+            description: System power factor (IEC sign convention)
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 49, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            measurand: { base_quantity: power_factor, aggregation: TOTAL }
+          - point_id: phase_sequence
+            name: Phase Sequence
+            description: "-1 = L1-L3-L2, +1 = L1-L2-L3 (meaningful only in 3-phase systems)"
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: INPUT_REGISTER, offset: 50, length_words: 1, byte_order: BIG_ENDIAN }
+          - point_id: frequency
+            name: Frequency
+            description: Line frequency
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 51, length_words: 1, byte_order: BIG_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+          - point_id: energy_active_import_total
+            name: kWh (+) TOT
+            description: Total imported active energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 52, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER, aggregation: TOTAL }
+          - point_id: energy_reactive_import_total
+            name: kvarh (+) TOT
+            description: Total imported reactive energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 54, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: REGISTER, aggregation: TOTAL }
+          - point_id: energy_active_export_total
+            name: kWh (-) TOT
+            description: Total exported active energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 78, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: REGISTER, aggregation: TOTAL }
+          - point_id: energy_reactive_export_total
+            name: kvarh (-) TOT
+            description: Total exported reactive energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 80, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: REGISTER, aggregation: TOTAL }
+          - point_id: energy_apparent_total
+            name: kVAh TOT
+            description: Total apparent energy
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 86, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kVAh
+            measurand: { base_quantity: energy_apparent, accumulation: REGISTER, aggregation: TOTAL }
+
+      # --- Signed map (Table 4.4, read whole block FC03/FC04) ----------------
+      # OBIS-coded billing energies + device identity + the vendor ECDSA
+      # signature over the block. This is Carlo Gavazzi's own signed dataset,
+      # distinct from the OCMF file produced by the charging-session flow below.
+      - block_id: signed_map
+        name: Signed Map
+        space: INPUT_REGISTER
+        start_offset: 2048
+        length_words: 93
+        points:
+          - point_id: signed_energy_active_import_obis
+            name: kWh (+) TOT OBIS code
+            description: Fixed 0100010800FF0000h (OBIS 1-0:1.8.0*255)
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: INPUT_REGISTER, offset: 2048, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+          - point_id: signed_energy_active_import
+            name: kWh (+) TOT (signed map)
+            description: Value; engineering unit and multiplier in the preceding registers (default Wh, multiplier 0)
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: INT64 }
+            mapping: { space: INPUT_REGISTER, offset: 2054, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: REGISTER, aggregation: TOTAL }
+          - point_id: signed_energy_active_export
+            name: kWh (-) TOT (signed map)
+            description: Value; engineering unit and multiplier in the preceding registers
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: INT64 }
+            mapping: { space: INPUT_REGISTER, offset: 2064, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            unit: Wh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: REGISTER, aggregation: TOTAL }
+          - point_id: signed_power
+            name: Power (signed map)
+            description: Value weight per multiplier register (default -1, i.e. 0.1 W)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 2074, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+          - point_id: signed_cable_loss
+            name: Cable loss (signed map)
+            description: Value weight per multiplier register (default -3, i.e. 0.001 Ohm)
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 2082, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+          - point_id: signed_model
+            name: Device Model
+            description: Device model string
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 2084, length_words: 10, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+          - point_id: signed_serial_number
+            name: Device Serial Number
+            description: Device serial number string
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 2094, length_words: 7, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+          - point_id: signed_device_tag
+            name: Device Tag
+            description: Customer-defined during configuration
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 2101, length_words: 8, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+          - point_id: signed_signature
+            name: Signature
+            description: ECDSA signature over the signed map (32 words for 256-bit; 48 words for 384-bit models)
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: INPUT_REGISTER, offset: 2109, length_words: 32, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+      # --- Device identity and signature parameters --------------------------
+      - block_id: device_info
+        name: Device Information
+        space: INPUT_REGISTER
+        points:
+          - point_id: serial_number
+            name: Serial Number
+            description: Device serial number
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: INPUT_REGISTER, offset: 20480, length_words: 7, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+          - point_id: production_year
+            name: Production Year
+            description: Year of manufacture
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 20487, length_words: 1, byte_order: BIG_ENDIAN }
+          - point_id: device_state
+            name: Device State
+            description: Device state bitfield (see manual section 4.3)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 20498, length_words: 1, byte_order: BIG_ENDIAN }
+          - point_id: signature_type
+            name: Signature Type
+            description: Cryptographic signature length of the signed map (256-bit, 384-bit, or none)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: signature_type } }
+            mapping: { space: INPUT_REGISTER, offset: 9471, length_words: 1, byte_order: BIG_ENDIAN }
+          - point_id: public_key_der
+            name: Public Key (DER format)
+            description: ECDSA public key in DER format; 46 words for 256-bit, 62 words for 384-bit models
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: INPUT_REGISTER, offset: 9728, length_words: 46, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+
+      # --- OCMF charging session (Table 4.32-4.40, read/write FC03/06/10) -----
+      # The typed OCMF identification registers, the transaction command/status,
+      # and the last-transaction OCMF file. Written by start_transaction and read
+      # by stop_transaction below.
+      - block_id: ocmf_session
+        name: OCMF Charging Session
+        space: HOLDING_REGISTER
+        start_offset: 26880
+        length_words: 4096
+        points:
+          - point_id: tariff_text
+            name: OCMF Tariff Text (TT)
+            description: OCMF TT field; ASCII, NUL-terminated. Writable only outside a charging session
+            access: READ_WRITE
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 26880, length_words: 126, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+            write: { behavior: DIRECT }
+          - point_id: transaction_id_method
+            name: Transaction ID Method
+            description: 0 = auto (EM580 generates), 1 = external (controller writes 6F01h)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: transaction_id_method } }
+            mapping: { space: HOLDING_REGISTER, offset: 28416, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: transaction_id
+            name: External Transaction ID
+            description: Controller-supplied transaction id (used when transaction_id_method = EXTERNAL); ASCII, NUL-terminated
+            access: READ_WRITE
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 28417, length_words: 7, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+            write: { behavior: DIRECT }
+          - point_id: identification_status
+            name: OCMF Identification Status (IS)
+            description: "OCMF IS: whether a user assignment is present"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_status } }
+            mapping: { space: HOLDING_REGISTER, offset: 28672, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: identification_level
+            name: OCMF Identification Level (IL)
+            description: "OCMF IL: overall status of the user assignment"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_level } }
+            mapping: { space: HOLDING_REGISTER, offset: 28673, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: identification_flags_rfid
+            name: OCMF Identification Flags 1 (RFID)
+            description: OCMF IF group 1 (RFID)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_flags_rfid } }
+            mapping: { space: HOLDING_REGISTER, offset: 28674, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: identification_flags_ocpp
+            name: OCMF Identification Flags 2 (OCPP)
+            description: OCMF IF group 2 (OCPP)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_flags_ocpp } }
+            mapping: { space: HOLDING_REGISTER, offset: 28675, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: identification_flags_iso15118
+            name: OCMF Identification Flags 3 (ISO 15118)
+            description: OCMF IF group 3 (ISO 15118)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_flags_iso15118 } }
+            mapping: { space: HOLDING_REGISTER, offset: 28676, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: identification_flags_plmn
+            name: OCMF Identification Flags 4 (PLMN)
+            description: OCMF IF group 4 (PLMN)
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_flags_plmn } }
+            mapping: { space: HOLDING_REGISTER, offset: 28677, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: identification_type
+            name: OCMF Identification Type (IT)
+            description: "OCMF IT: type of identification data"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_type } }
+            mapping: { space: HOLDING_REGISTER, offset: 28678, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: identification_data
+            name: OCMF Identification Data (ID)
+            description: Actual identification data (e.g. RFID UID); ASCII, NUL-terminated
+            access: READ_WRITE
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 28679, length_words: 20, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+            write: { behavior: DIRECT }
+          - point_id: charging_point_id_type
+            name: OCMF Charging Point Identifier Type (CT)
+            description: "OCMF CT: charge-point identifier type"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_charging_point_id_type } }
+            mapping: { space: HOLDING_REGISTER, offset: 28699, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: charging_point_id
+            name: OCMF Charging Point Identifier (CI)
+            description: Charge-point identifier (the EVSE id when charging_point_id_type = EVSEID); ASCII, NUL-terminated
+            access: READ_WRITE
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 28700, length_words: 20, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+            write: { behavior: DIRECT }
+          - point_id: timezone_offset
+            name: Local Time Delta
+            description: Offset from UTC in minutes (-1440..1440)
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            unit: min
+            mapping: { space: HOLDING_REGISTER, offset: 28721, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: utc_timestamp
+            name: UTC Timestamp for Synchronization
+            description: Writing a new timestamp synchronizes the device clock
+            access: READ_WRITE
+            storage_type: S64
+            value_type: { primitive: INT64 }
+            unit: s
+            mapping: { space: HOLDING_REGISTER, offset: 28722, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: session_modality
+            name: Display Charging Direction
+            description: Displayed charging direction
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: session_modality } }
+            mapping: { space: HOLDING_REGISTER, offset: 28726, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: ocmf_command
+            name: OCMF Command
+            description: Transaction command register; the low byte is the ASCII command code ('B'/'E'/'A')
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_command } }
+            mapping: { space: HOLDING_REGISTER, offset: 28736, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: COMMAND_TRIGGER }
+          - point_id: charging_status
+            name: Charging Status
+            description: Charging session status
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_charging_status } }
+            mapping: { space: HOLDING_REGISTER, offset: 28741, length_words: 1, byte_order: BIG_ENDIAN }
+          - point_id: session_end_duration
+            name: Charging Session End Duration
+            description: Grace duration in seconds (60..300)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            unit: s
+            mapping: { space: HOLDING_REGISTER, offset: 28752, length_words: 1, byte_order: BIG_ENDIAN }
+          - point_id: last_transaction_id_ascii
+            name: Last Transaction ID (ASCII)
+            description: Last transaction id as ASCII
+            access: READ_ONLY
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 28761, length_words: 7, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+          - point_id: time_sync_status
+            name: Time Synchronization Status
+            description: Clock synchronization state
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: time_sync_status } }
+            mapping: { space: HOLDING_REGISTER, offset: 28768, length_words: 1, byte_order: BIG_ENDIAN }
+          - point_id: ocmf_state
+            name: OCMF File State
+            description: State of the last-transaction OCMF file; READY (2) means it can be read
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_state } }
+            mapping: { space: HOLDING_REGISTER, offset: 28928, length_words: 1, byte_order: BIG_ENDIAN }
+            write: { behavior: DIRECT }
+          - point_id: ocmf_file_length
+            name: OCMF File Length
+            description: Number of WORDS to read from the OCMF file (gates the ocmf_file read)
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 28929, length_words: 1, byte_order: BIG_ENDIAN }
+          - point_id: ocmf_transaction_id
+            name: OCMF Last Transaction ID
+            description: Numeric id of the last finalized transaction
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 28930, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+          - point_id: ocmf_file
+            name: OCMF File
+            description: Signed OCMF file for the last transaction; effective word count from ocmf_file_length (max 2031 words)
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 28944, length_words: 2031, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, length_ref: { point_id: ocmf_file_length } }
+
+      # --- Charging session real-time variables (Table 4.40) -----------------
+      - block_id: charging_session_realtime
+        name: Charging Session Real-Time Variables
+        space: HOLDING_REGISTER
+        start_offset: 31232
+        length_words: 12
+        points:
+          - point_id: delta_energy_active_import
+            name: Delta kWh (+)
+            description: Active energy imported since the transaction started
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: UINT32 }
+            unit: Wh
+            mapping: { space: HOLDING_REGISTER, offset: 31232, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: SESSION, aggregation: TOTAL }
+          - point_id: delta_energy_active_export
+            name: Delta kWh (-)
+            description: Active energy exported since the transaction started
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: UINT32 }
+            unit: Wh
+            mapping: { space: HOLDING_REGISTER, offset: 31236, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: SESSION, aggregation: TOTAL }
+          - point_id: delta_duration
+            name: Charging Duration
+            description: Elapsed charging time since the transaction started
+            access: READ_ONLY
+            storage_type: U64
+            value_type: { primitive: UINT32 }
+            unit: s
+            mapping: { space: HOLDING_REGISTER, offset: 31240, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN }
+
+    # --- Signed transaction procedures (spec SS11.7) -------------------------
+    # Manual section 4.4. Because the EM580 exposes every OCMF field as its own
+    # register, start_transaction takes each field as an OPTIONAL typed param
+    # bound one-to-one to a register (the meter's defaults are valid, so unset
+    # params simply skip their write). No caller-side payload composition is
+    # needed: the meter builds the signed OCMF file itself. This is the property
+    # the Bauer BSM and Iskra WM3M4C lack.
+    #
+    # Before start_transaction the caller should sync the clock (write
+    # utc_timestamp + timezone_offset) and, to supply an external id, set
+    # transaction_id_method = EXTERNAL. Not modeled as steps here: they are
+    # session-independent setup writes on the points above.
+    commands:
+      - command_id: start_transaction
+        name: Start Transaction
+        command_ref: ocmf:start_transaction
+        description: Write the OCMF identification fields and begin a signed charging session ('B')
+        params:
+          - field: transaction_id
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 28417, length_words: 7, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+          - field: evse_id
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 28700, length_words: 20, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+          - field: identification_status
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_status } }
+            mapping: { space: HOLDING_REGISTER, offset: 28672, length_words: 1, byte_order: BIG_ENDIAN }
+          - field: identification_level
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_level } }
+            mapping: { space: HOLDING_REGISTER, offset: 28673, length_words: 1, byte_order: BIG_ENDIAN }
+          - field: identification_type
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_type } }
+            mapping: { space: HOLDING_REGISTER, offset: 28678, length_words: 1, byte_order: BIG_ENDIAN }
+          - field: identification_data
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 28679, length_words: 20, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+          - field: identification_flags_rfid
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_flags_rfid } }
+            mapping: { space: HOLDING_REGISTER, offset: 28674, length_words: 1, byte_order: BIG_ENDIAN }
+          - field: identification_flags_ocpp
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_flags_ocpp } }
+            mapping: { space: HOLDING_REGISTER, offset: 28675, length_words: 1, byte_order: BIG_ENDIAN }
+          - field: identification_flags_iso15118
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_flags_iso15118 } }
+            mapping: { space: HOLDING_REGISTER, offset: 28676, length_words: 1, byte_order: BIG_ENDIAN }
+          - field: identification_flags_plmn
+            storage_type: U16
+            value_type: { enum_ref: { type_id: ocmf_identification_flags_plmn } }
+            mapping: { space: HOLDING_REGISTER, offset: 28677, length_words: 1, byte_order: BIG_ENDIAN }
+          - field: tariff_text
+            storage_type: STRING_ASCII
+            value_type: { primitive: STRING }
+            mapping: { space: HOLDING_REGISTER, offset: 26880, length_words: 126, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, string_encoding: { charset: ASCII, padding: PADDING_NULL, termination: NULL_TERMINATED } }
+        steps:
+          - name: write_transaction_id
+            write: { param: transaction_id }
+          - name: write_evse_id
+            write: { param: evse_id }
+          - name: write_identification_status
+            write: { param: identification_status }
+          - name: write_identification_level
+            write: { param: identification_level }
+          - name: write_identification_type
+            write: { param: identification_type }
+          - name: write_identification_data
+            write: { param: identification_data }
+          - name: write_flags_rfid
+            write: { param: identification_flags_rfid }
+          - name: write_flags_ocpp
+            write: { param: identification_flags_ocpp }
+          - name: write_flags_iso15118
+            write: { param: identification_flags_iso15118 }
+          - name: write_flags_plmn
+            write: { param: identification_flags_plmn }
+          - name: write_tariff_text
+            write: { param: tariff_text }
+          - name: begin
+            write: { trigger: { point_id: ocmf_command, value: 0x42 } }
+          - name: wait_charging
+            poll:
+              point_id: charging_status
+              until: { op: EQ, value: 1 }
+              interval_ms: 500
+              timeout_ms: 15000
+        results:
+          - field: status
+            from: charging_status
+            enum_ref: { type_id: ocmf_charging_status }
+          - field: transaction_id
+            from: last_transaction_id_ascii
+            value_type: { primitive: STRING }
+
+      - command_id: stop_transaction
+        name: Stop Transaction
+        command_ref: ocmf:stop_transaction
+        description: End the charging session ('E'), wait for the signed OCMF file, read it, and confirm the read to release the meter
+        steps:
+          - name: end
+            write: { trigger: { point_id: ocmf_command, value: 0x45 } }
+          - name: wait_end
+            poll:
+              point_id: charging_status
+              until: { op: EQ, value: 2 }
+              interval_ms: 500
+              timeout_ms: 15000
+          - name: wait_ocmf_ready
+            poll:
+              point_id: ocmf_state
+              until: { op: EQ, value: 2 }
+              interval_ms: 500
+              timeout_ms: 30000
+          - name: fetch_length
+            read: { point_id: ocmf_file_length, into: length }
+          - name: fetch_file
+            read: { point_id: ocmf_file, into: ocmf }
+          - name: fetch_transaction_id
+            read: { point_id: ocmf_transaction_id, into: transaction_id }
+          - name: confirm_read
+            write: { trigger: { point_id: ocmf_state, value: 0 } }
+        results:
+          - field: ocmf
+            from: ocmf
+            value_type: { primitive: BYTES }
+          - field: length
+            from: length
+            value_type: { primitive: UINT32 }
+          - field: transaction_id
+            from: transaction_id
+            value_type: { primitive: UINT32 }
