@@ -41,6 +41,7 @@ shakes out bugs in the stdlib and the codec before the registry grows.
 | Carlo Gavazzi EM24-DIN | energy-meter | Integer registers with little-endian **word order** (the word-swap case), integer scaling |
 | ABB B23 | energy-meter | The wide one: U32/U64 energy, signed power, sentinels, an ASCII string field, multi-flag status registers, a date/time register |
 | Iskra WM3M4 | energy-meter | Composed values: T5/T6 embedded decade exponent (same-word mantissa/exponent bit windows, §14.2) and interleaved mantissa/exponent energy-total pools |
+| Phoenix Contact EEM-EM3xx | energy-meter | The complete one: all 23 appendix tables, `COIL` alarm bits, a `DeviceVariant`, and the same measurement exposed as scaled integer, float and display register |
 
 ## Encoding-pattern coverage
 
@@ -64,11 +65,14 @@ shakes out bugs in the stdlib and the codec before the registry grows.
 | Composed mantissa/exponent (§14) incl. embedded decade exponent (§14.2) | Iskra WM3M4 |
 | Multi-step command procedures (§11.7): params, trigger writes, poll conditions | Bauer BSM, Iskra WM3M4 |
 | Dynamic read length (`length_ref`, §11.7.1) | Iskra WM3M4 |
+| `COIL` space (read-only alarm bits, FC01) | Phoenix Contact EEM-EM3xx |
+| Typed register sub-fields (`fields`, §13.1) over a composite write word | Phoenix Contact EEM-EM3xx |
+| Device variants (§18, `removals`) | Phoenix Contact EEM-EM3xx |
 
-Patterns these profiles don't reach yet (`COIL`/`DISCRETE_INPUT`,
-`selector_ref`, repeating arrays with a stride, `BCD`, `U24/U48`) are covered
-by the golden fixtures and codec tests in the `moddef` repo, and will land
-here when a real device needs them.
+Patterns these profiles don't reach yet (`DISCRETE_INPUT`, `selector_ref`,
+repeating arrays with a stride, `BCD`, `U24/U48`) are covered by the golden
+fixtures and codec tests in the `moddef` repo, and will land here when a real
+device needs them.
 
 ## Validating
 

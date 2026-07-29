@@ -586,3 +586,37 @@ devices:
   - inverter_temperature
   - device_status
   - alarm_status
+- vendor: Phoenix Contact
+  model: EEM-EM3xx / EEM-DM3xx (MID energy meter)
+  category: energy-meter
+  doc_id: phoenixcontact.eem-em3xx
+  profile: energy-meter/phoenix-contact-eem-em3xx/phoenix-contact-eem-em3xx.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  - MODBUS_TCP
+  points: 569
+  status: vendor-confirmed
+  source: Phoenix Contact UM EN EEM-EM/DM3xx (doc 108591_en_02, rev. 02) appendix A "Modbus register",
+    tables A-2 … A-23 transcribed in full — the three redundant views of every measurement (LCD
+    display block at 0xC550/0xC650, scaled integers at 0x0000/0x0100, IEEE-754 floats at
+    0x1000/0x1100), MID-sealed total energy meters, tariff 1 and tariff 2 meters, resettable partial
+    and derived balancing meters, demand (DMD) and maximum-demand (MAXDMD) registers, device
+    information and configuration, the RS-485/Ethernet/Modbus write area, and the 40 alarm coils
+    (FC01). Covers EEM-EM355/EM357/DM357/DM357-70 over Modbus/RTU and EEM-EM375/EM377 over
+    Modbus/TCP (the `eem-em37x-ethernet` variant drops the tariff registers, which the Ethernet
+    models lack)
+  source_url: https://www.phoenixcontact.com/en-pc/products/energy-meter-eem-em357-2908588
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - reactive_power
+  - apparent_power
+  - power_factor
+  - frequency
+  - energy_active
+  - energy_reactive
+  - energy_apparent
+  - device_status
+  - fault_code
+  - alarm_status
