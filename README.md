@@ -5,14 +5,17 @@ default registry for `moddef search`. This is the high-bar library. Every
 profile here:
 
 1. lints clean (`moddef lint` reports 0 errors),
-2. is derived from a vendor-confirmed register map or a published SunSpec model
+2. is derived from a manufacturer register map or a published SunSpec model
    (each profile's header links the source), and
 3. carries a source attribution.
 
 `status: vendor-confirmed` in [`registry.yaml`](./registry.yaml) means the
-register map matches the vendor's documentation. None of these have been
-verified against physical hardware yet; profiles that get hardware-tested will
-be marked accordingly.
+register map matches the vendor's documentation. `status: unverified` means the
+source is weaker than that — a community-sourced document, or vendor API docs
+that leave part of the Modbus framing to inference — and the profile's header
+spells out exactly which parts were interpreted rather than read. None of these
+have been verified against physical hardware yet; profiles that get
+hardware-tested will be marked accordingly.
 
 ## Layout
 
@@ -42,6 +45,7 @@ shakes out bugs in the stdlib and the codec before the registry grows.
 | ABB B23 | energy-meter | The wide one: U32/U64 energy, signed power, sentinels, an ASCII string field, multi-flag status registers, a date/time register |
 | Iskra WM3M4 | energy-meter | Composed values: T5/T6 embedded decade exponent (same-word mantissa/exponent bit windows, §14.2) and interleaved mantissa/exponent energy-total pools |
 | Phoenix Contact EEM-EM3xx | energy-meter | The complete one: all 23 appendix tables, `COIL` alarm bits, a `DeviceVariant`, and the same measurement exposed as scaled integer, float and display register |
+| YTL DDS353H / YTL528x | energy-meter | A repeating array with a stride (the 100-entry holiday list), packed hour/minute and year/month/day config words, an eight-period time-of-use schedule, and a worked example of transcribing an unverified, half-finished source document |
 
 ## Encoding-pattern coverage
 
@@ -67,12 +71,12 @@ shakes out bugs in the stdlib and the codec before the registry grows.
 | Dynamic read length (`length_ref`, §11.7.1) | Iskra WM3M4 |
 | `COIL` space (read-only alarm bits, FC01) | Phoenix Contact EEM-EM3xx |
 | Typed register sub-fields (`fields`, §13.1) over a composite write word | Phoenix Contact EEM-EM3xx |
-| Device variants (§18, `removals`) | Phoenix Contact EEM-EM3xx |
+| Device variants (§18, `removals`) | Phoenix Contact EEM-EM3xx, YTL DDS353H |
+| Repeating array with `stride_words` (§14.1) | YTL DDS353H |
 
 Patterns these profiles don't reach yet (`DISCRETE_INPUT`, `selector_ref`,
-repeating arrays with a stride, `BCD`, `U24/U48`) are covered by the golden
-fixtures and codec tests in the `moddef` repo, and will land here when a real
-device needs them.
+`BCD`, `U24/U48`) are covered by the golden fixtures and codec tests in the
+`moddef` repo, and will land here when a real device needs them.
 
 ## Validating
 

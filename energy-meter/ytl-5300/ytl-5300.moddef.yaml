@@ -1,0 +1,1065 @@
+# Source: "YTL5300 registry matrix.xls", the manufacturer's Modbus register
+# matrix for the YTL5300. A third party got it out of the manufacturer by mail
+# and republished it in psy0rz/YTLmodbus:
+# https://github.com/psy0rz/YTLmodbus
+# Part of the ModDef blessed device registry.
+#
+# The manufacturer is Zhejiang Yongtailong Electronic Co., Ltd (YTL),
+# www.ytl-e.com. YTL publishes no Modbus document for this family at all. The
+# register map survives only in distributor and third-party documents.
+#
+# STATUS: community-sourced, NOT vendor-confirmed. The matrix is YTL's own file
+# but YTL never published it, and it is a bare address list. No unit column, no
+# scaling, no value ranges, and a running "Register No." index that restarts
+# partway through and skips entries.
+#
+# Cross-checked against four other sources:
+#
+#   Elektramat (NL distributor) hosts a PDF print of this exact spreadsheet as
+#   the "Modbus register matrix" specsheet for its article 5299:
+#   https://www.elektramat.nl/media/wysiwyg/Specsheet/Modbus_register_matrix.pdf
+#   Every address, length and data-mode column matches the .xls line for line.
+#   So the map is publicly distributed by the seller, not just a privately
+#   mailed file.
+#
+#   cFos eMobility, "cFos YTL DTS353 Modbus Registers", 2022-03-08:
+#   https://www.cfos-emobility.de/files/cfos-ytl-dts353-modbus-registers.pdf
+#   An independent transcription that ships in a real product. It confirms the
+#   line settings (9600 8E1), the default address, the supported baud rates,
+#   the FC06/FC16 split on the write side and the exception codes. Its T1
+#   energy group is shifted, though: it blanks 0x0134, moves "T1 Reverse Active
+#   Energy" up to 0x0136 and loses "T1 Total Reactive Energy" entirely. That
+#   contradicts its own T2, T3 and T4 groups as well as the matrix, so this
+#   profile follows the matrix.
+#
+#   Zhejiang Yongtailong, "DTS353F-1/2/3 Three Phase Meter 80A Direct
+#   Connection User Manual" (D519032/D519033/D519024), April 2013. A genuine
+#   vendor manual for the meter that shares this register map. It has no
+#   register table, but its LCD display list supplies the engineering units the
+#   matrix omits (kWh, kVarh, V, A, kW, kVA, COS, Hz) and documents the cycle
+#   time as 1-30 s, the S0 impulse output, the four tariffs and the "synthesis
+#   code" that picks the measurement mode.
+#
+#   A Home Assistant thread where someone reads a live DTS353F-2 at 9600 8E1,
+#   with FP32 values at 0x000E, 0x0014, 0x0016, 0x001C and 0x0100 and power in
+#   kW: https://community.home-assistant.io/t/388371
+#
+# Covers the YTL5300 and the DTS353F-2, which the YTLmodbus README lists as
+# sharing this register map. Both are three-phase DIN-rail kWh meters with an
+# S0 pulse output, four-rate time-of-use metering and separate forward and
+# reverse energy registers. They are rebranded and resold too, for example as
+# EMAT meters by Elektramat.
+#
+# Encoding, from the matrix:
+#   - Function code 03 for every read and 06 or 10 for writes, so the whole map
+#     lives in HOLDING_REGISTER space. Points that the matrix lists in the
+#     write table carry the documented write function code in
+#     allowed_function_codes: 06 for the single-register writes, 16 for the
+#     multi-register ones.
+#   - Addresses are raw 0-based protocol offsets written in hex, so the ModDef
+#     offset is just the matrix address. Each point carries it as a trailing
+#     comment. The reference implementation reads them straight through
+#     minimalmodbus, e.g. read_float(0x000E) for L1 voltage and
+#     read_float(0x0100) for total active energy.
+#   - The "length" column counts bytes: 2 is one register, 4 is two, 8 is four,
+#     24 is twelve.
+#   - Every measurement is marked "float" in the "data mode" column, i.e.
+#     32-bit IEEE-754 across two registers. The reference implementation reads
+#     them with minimalmodbus read_float() at its default byte order, which
+#     puts the most significant register first: BIG_ENDIAN bytes with
+#     WORD_BIG_ENDIAN words.
+#   - Line settings: "11bits data (1 start bit, 8 data bit, 1 even check bit,
+#     1 stop bit)", so 8E1. Default address 1, default 9600 bps, with 1200,
+#     2400 and 4800 optional.
+#
+# Where the matrix is silent and this profile fills in the gap. Check these
+# against hardware before trusting them:
+#   - Units. The matrix has no unit column. The units here come from the
+#     DTS353F user manual's LCD display list (kWh, kVarh, V, A, kW, kVA, COS,
+#     Hz), and they line up with the reference implementation multiplying the
+#     active-power registers by 1000 to get watts and with the Home Assistant
+#     report of kW power and kWh energy. Reactive power is taken as kvar by the
+#     same scaling family, since the manual's display list leaves it out. No
+#     register carries a divider, so no point here has a transform: the float
+#     values are already in engineering units.
+#   - Register 0x0008 is missing from the matrix. Hardware version occupies
+#     0x0006 and 0x0007, and the S0 output rate starts at 0x0009. The "Register
+#     No." column skips one entry at exactly that point, going 5 then 7, so a
+#     single-register item was dropped from the sheet rather than reserved on
+#     purpose. It stays a gap here.
+#   - The baud-rate register 0x0003 is readable and writable, but the matrix
+#     never gives the code-to-rate mapping, so it is modelled as a plain
+#     register instead of an enum. The sister DDS353H document uses 1 = 1200,
+#     2 = 2400, 3 = 4800, 4 = 9600, and this meter very likely does the same,
+#     but nothing here documents that.
+#   - "Combined Code", "HOLIDAY-WEEKEND T" and "Season ON/OFF" appear by name
+#     only, with no range or semantics. "Cycle time" at least turns up in the
+#     DTS353F user manual's display list as the LCD scroll interval, 1-30 s,
+#     and "Combined Code" is the manual's "synthesis code" or "combinatorial
+#     active status word", which picks one of three measurement modes.
+#   - "TIME interval 1..8" and "TIME zone" are 24-byte blobs and the matrix
+#     never describes what is inside them. They are transcribed as raw
+#     twelve-register byte strings so that the addresses and the read/write
+#     access are not lost.
+#   - "Time" at 0x003C is eight bytes, modelled as a SPLIT_FIELDS datetime. The
+#     matrix does not name the individual fields.
+#   - "CRC CODE" at 0x0041 is read-only and undocumented beyond its name.
+
+doc_id: ytl.5300
+name: YTL5300 / DTS353F-2 Three-Phase Energy Meter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+devices:
+  - device_id: ytl-5300
+    vendor: YTL
+    model: YTL5300
+    supported_transports:
+      - MODBUS_RTU
+    blocks:
+
+      # Matrix rows 0x0000-0x000D. 0x0008 is missing from the matrix; see the
+      # header. The read table lists every register here. The write table lists
+      # 0x0002, 0x0003, 0x000B, 0x000C and 0x000D as 06H writes, and 0x0009 as a
+      # 10H write.
+      - block_id: device_info
+        name: "Identification and Configuration"
+        space: HOLDING_REGISTER
+        start_offset: 0 # 0x0000
+        length_words: 14
+        points:
+          - point_id: serial_number
+            name: "Serial Number"
+            description: "Meter serial number. The matrix gives four bytes and leaves the data mode blank, so this is an unsigned 32-bit integer rather than a float."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0000
+
+          - point_id: modbus_address
+            name: "Modbus Address"
+            description: "Modbus slave address. Defaults to 1."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 2, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 6] } # 0x0002
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 1, denominator: 1 }, max_value: { numerator: 247, denominator: 1 }, safety_note: "Changing the address drops the current connection; the meter answers on the new address immediately" } }
+
+          - point_id: baud_rate_code
+            name: "Baud Rate Code"
+            description: "Serial line speed selector. Default 9600 bps, with 1200, 2400 and 4800 bps optional. The matrix never says which code means which rate."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 3, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 6] } # 0x0003
+            write: { behavior: DIRECT, constraints: { safety_note: "Changing the baud rate drops the current connection" } }
+
+          - point_id: software_version
+            name: "Software Version"
+            description: "Firmware version, encoded as a float."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 4, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0004
+
+          - point_id: hardware_version
+            name: "Hardware Version"
+            description: "Hardware version, encoded as a float."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 6, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0006
+
+          - point_id: s0_output_rate
+            name: "S0 Output Rate"
+            description: "S0 pulse output rate, encoded as a float. The matrix gives no unit, but the DTS353F user manual lists the impulse output as 1000, 100, 10 or 1, so pulses per kWh."
+            access: READ_WRITE
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 9, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0009
+            write: { behavior: DIRECT }
+
+          - point_id: combined_code
+            name: "Combined Code"
+            description: "Vendor-defined combination code. The DTS353F user manual calls it the \"synthesis code\" or \"combinatorial active status word\" and says it selects one of three measurement modes. Neither document gives the value coding."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 11, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 6] } # 0x000B
+            write: { behavior: DIRECT }
+
+          - point_id: holiday_weekend_tariff
+            name: "Holiday / Weekend Tariff"
+            description: "Tariff selector used on holidays and weekends, from the matrix row \"HOLIDAY-WEEKEND T\". The matrix gives neither a range nor a meaning."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 12, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 6] } # 0x000C
+            write: { behavior: DIRECT }
+
+          - point_id: cycle_time
+            name: "Cycle Time"
+            description: "LCD page scrolling interval. The matrix gives no unit and no range, but the DTS353F user manual documents the setting as 1 to 30 seconds."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 13, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 6] } # 0x000D
+            write: { behavior: DIRECT }
+
+
+      # Matrix rows 0x000E-0x003B. All 32-bit floats, already in engineering
+      # units.
+      - block_id: instantaneous
+        name: "Instantaneous Measurements"
+        space: HOLDING_REGISTER
+        start_offset: 14 # 0x000E
+        length_words: 46
+        points:
+          - point_id: voltage_l1_n
+            name: "Voltage L1-N"
+            description: "Phase 1 RMS voltage to neutral."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 14, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x000E
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+
+          - point_id: voltage_l2_n
+            name: "Voltage L2-N"
+            description: "Phase 2 RMS voltage to neutral."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0010
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+
+          - point_id: voltage_l3_n
+            name: "Voltage L3-N"
+            description: "Phase 3 RMS voltage to neutral."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 18, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0012
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+
+          - point_id: frequency
+            name: "Frequency"
+            description: "Grid frequency."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 20, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0014
+            unit: Hz
+            measurand: { base_quantity: frequency }
+
+          - point_id: current_l1
+            name: "Current L1"
+            description: "Phase 1 RMS current."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 22, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0016
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1 }
+
+          - point_id: current_l2
+            name: "Current L2"
+            description: "Phase 2 RMS current."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 24, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0018
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+
+          - point_id: current_l3
+            name: "Current L3"
+            description: "Phase 3 RMS current."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 26, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x001A
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+
+          - point_id: active_power_total
+            name: "Active Power Total"
+            description: "System active power, sum of the three phases."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 28, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x001C
+            unit: kW
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: active_power_l1
+            name: "Active Power L1"
+            description: "Phase 1 active power."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 30, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x001E
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+
+          - point_id: active_power_l2
+            name: "Active Power L2"
+            description: "Phase 2 active power."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 32, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0020
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+
+          - point_id: active_power_l3
+            name: "Active Power L3"
+            description: "Phase 3 active power."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 34, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0022
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+
+          - point_id: reactive_power_total
+            name: "Reactive Power Total"
+            description: "System reactive power, sum of the three phases."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 36, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0024
+            unit: kvar
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL }
+
+          - point_id: reactive_power_l1
+            name: "Reactive Power L1"
+            description: "Phase 1 reactive power."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 38, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0026
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L1 }
+
+          - point_id: reactive_power_l2
+            name: "Reactive Power L2"
+            description: "Phase 2 reactive power."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 40, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0028
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L2 }
+
+          - point_id: reactive_power_l3
+            name: "Reactive Power L3"
+            description: "Phase 3 reactive power."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 42, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x002A
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L3 }
+
+          - point_id: apparent_power_total
+            name: "Apparent Power Total"
+            description: "System apparent power, sum of the three phases."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 44, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x002C
+            unit: kVA
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL }
+
+          - point_id: apparent_power_l1
+            name: "Apparent Power L1"
+            description: "Phase 1 apparent power."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 46, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x002E
+            unit: kVA
+            measurand: { base_quantity: apparent_power, phase_ref: L1 }
+
+          - point_id: apparent_power_l2
+            name: "Apparent Power L2"
+            description: "Phase 2 apparent power."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 48, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0030
+            unit: kVA
+            measurand: { base_quantity: apparent_power, phase_ref: L2 }
+
+          - point_id: apparent_power_l3
+            name: "Apparent Power L3"
+            description: "Phase 3 apparent power."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 50, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0032
+            unit: kVA
+            measurand: { base_quantity: apparent_power, phase_ref: L3 }
+
+          - point_id: power_factor_total
+            name: "Power Factor Total"
+            description: "System power factor."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 52, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0034
+            unit: "1"
+            measurand: { base_quantity: power_factor, aggregation: TOTAL }
+
+          - point_id: power_factor_l1
+            name: "Power Factor L1"
+            description: "Phase 1 power factor. The matrix labels all three rows simply \"Power Factor\"; they follow the total in phase order."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 54, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0036
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L1 }
+
+          - point_id: power_factor_l2
+            name: "Power Factor L2"
+            description: "Phase 2 power factor. The matrix labels all three rows simply \"Power Factor\"; they follow the total in phase order."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 56, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0038
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L2 }
+
+          - point_id: power_factor_l3
+            name: "Power Factor L3"
+            description: "Phase 3 power factor. The matrix labels all three rows simply \"Power Factor\"; they follow the total in phase order."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 58, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x003A
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L3 }
+
+
+      # Matrix rows 0x003C-0x0041. Of these, only "Time" turns up in the write
+      # table, as a 10H write.
+      - block_id: clock_status
+        name: "Clock and Status"
+        space: HOLDING_REGISTER
+        start_offset: 60 # 0x003C
+        length_words: 6
+        points:
+          - point_id: rtc_datetime
+            name: "Real-Time Clock"
+            description: "Meter clock, eight bytes across four registers. The matrix names the register but never describes how the fields are laid out."
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: DATETIME }
+            mapping: { space: HOLDING_REGISTER, offset: 60, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x003C
+            datetime: { encoding: SPLIT_FIELDS, width: U64 }
+            write: { behavior: DIRECT }
+
+          - point_id: season_state
+            name: "Season State"
+            description: "Seasonal tariff switching on or off, from the matrix row \"Season ON/OFF\". Read-only, and the matrix gives no value coding."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 64, byte_order: BIG_ENDIAN } # 0x0040
+
+          - point_id: crc_code
+            name: "CRC Code"
+            description: "Vendor CRC or checksum register. Read-only, and the matrix says nothing about it beyond the name."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 65, byte_order: BIG_ENDIAN } # 0x0041
+
+
+      # Matrix rows 0x0100-0x015F, all 32-bit floats. First six groups of four
+      # registers: total, forward and reverse, active then reactive, each one as
+      # system plus L1, L2 and L3. Then four per-tariff groups of six.
+      - block_id: energy
+        name: "Energy Registers"
+        space: HOLDING_REGISTER
+        start_offset: 256 # 0x0100
+        length_words: 96
+        points:
+          - point_id: energy_active_total
+            name: "Total Active Energy"
+            description: "System total active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 256, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0100
+            unit: kWh
+            measurand: { base_quantity: energy_active, aggregation: TOTAL, accumulation: LIFETIME }
+
+          - point_id: energy_active_l1
+            name: "Active Energy L1"
+            description: "Phase 1 total active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 258, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0102
+            unit: kWh
+            measurand: { base_quantity: energy_active, phase_ref: L1, accumulation: LIFETIME }
+
+          - point_id: energy_active_l2
+            name: "Active Energy L2"
+            description: "Phase 2 total active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 260, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0104
+            unit: kWh
+            measurand: { base_quantity: energy_active, phase_ref: L2, accumulation: LIFETIME }
+
+          - point_id: energy_active_l3
+            name: "Active Energy L3"
+            description: "Phase 3 total active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 262, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0106
+            unit: kWh
+            measurand: { base_quantity: energy_active, phase_ref: L3, accumulation: LIFETIME }
+
+          - point_id: energy_active_forward_total
+            name: "Total Forward Active Energy"
+            description: "System forward active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 264, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0108
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: FORWARD, aggregation: TOTAL, accumulation: LIFETIME }
+
+          - point_id: energy_active_forward_l1
+            name: "Forward Active Energy L1"
+            description: "Phase 1 forward active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 266, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x010A
+            unit: kWh
+            measurand: { base_quantity: energy_active, phase_ref: L1, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: energy_active_forward_l2
+            name: "Forward Active Energy L2"
+            description: "Phase 2 forward active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 268, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x010C
+            unit: kWh
+            measurand: { base_quantity: energy_active, phase_ref: L2, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: energy_active_forward_l3
+            name: "Forward Active Energy L3"
+            description: "Phase 3 forward active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 270, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x010E
+            unit: kWh
+            measurand: { base_quantity: energy_active, phase_ref: L3, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: energy_active_reverse_total
+            name: "Total Reverse Active Energy"
+            description: "System reverse active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 272, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0110
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: REVERSE, aggregation: TOTAL, accumulation: LIFETIME }
+
+          - point_id: energy_active_reverse_l1
+            name: "Reverse Active Energy L1"
+            description: "Phase 1 reverse active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 274, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0112
+            unit: kWh
+            measurand: { base_quantity: energy_active, phase_ref: L1, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: energy_active_reverse_l2
+            name: "Reverse Active Energy L2"
+            description: "Phase 2 reverse active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 276, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0114
+            unit: kWh
+            measurand: { base_quantity: energy_active, phase_ref: L2, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: energy_active_reverse_l3
+            name: "Reverse Active Energy L3"
+            description: "Phase 3 reverse active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 278, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0116
+            unit: kWh
+            measurand: { base_quantity: energy_active, phase_ref: L3, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_total
+            name: "Total Reactive Energy"
+            description: "System total active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 280, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0118
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, aggregation: TOTAL, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_l1
+            name: "Reactive Energy L1"
+            description: "Phase 1 total active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 282, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x011A
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, phase_ref: L1, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_l2
+            name: "Reactive Energy L2"
+            description: "Phase 2 total active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 284, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x011C
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, phase_ref: L2, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_l3
+            name: "Reactive Energy L3"
+            description: "Phase 3 total active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 286, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x011E
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, phase_ref: L3, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_forward_total
+            name: "Total Forward Reactive Energy"
+            description: "System forward active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 288, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0120
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: FORWARD, aggregation: TOTAL, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_forward_l1
+            name: "Forward Reactive Energy L1"
+            description: "Phase 1 forward active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 290, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0122
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, phase_ref: L1, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_forward_l2
+            name: "Forward Reactive Energy L2"
+            description: "Phase 2 forward active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 292, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0124
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, phase_ref: L2, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_forward_l3
+            name: "Forward Reactive Energy L3"
+            description: "Phase 3 forward active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 294, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0126
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, phase_ref: L3, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_reverse_total
+            name: "Total Reverse Reactive Energy"
+            description: "System reverse active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 296, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0128
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: REVERSE, aggregation: TOTAL, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_reverse_l1
+            name: "Reverse Reactive Energy L1"
+            description: "Phase 1 reverse active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 298, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x012A
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, phase_ref: L1, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_reverse_l2
+            name: "Reverse Reactive Energy L2"
+            description: "Phase 2 reverse active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 300, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x012C
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, phase_ref: L2, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_reverse_l3
+            name: "Reverse Reactive Energy L3"
+            description: "Phase 3 reverse active energy across all four tariffs."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 302, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x012E
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, phase_ref: L3, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: t1_energy_active
+            name: "Tariff 1 Active Energy"
+            description: "System total active energy accumulated in tariff register 1."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 304, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0130
+            unit: kWh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: t1_energy_active_forward
+            name: "Tariff 1 Forward Active Energy"
+            description: "System forward active energy accumulated in tariff register 1."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 306, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0132
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: t1_energy_active_reverse
+            name: "Tariff 1 Reverse Active Energy"
+            description: "System reverse active energy accumulated in tariff register 1."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 308, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0134
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: t1_energy_reactive
+            name: "Tariff 1 Reactive Energy"
+            description: "System total active energy accumulated in tariff register 1."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 310, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0136
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: t1_energy_reactive_forward
+            name: "Tariff 1 Forward Reactive Energy"
+            description: "System forward active energy accumulated in tariff register 1."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 312, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0138
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: t1_energy_reactive_reverse
+            name: "Tariff 1 Reverse Reactive Energy"
+            description: "System reverse active energy accumulated in tariff register 1."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 314, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x013A
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: t2_energy_active
+            name: "Tariff 2 Active Energy"
+            description: "System total active energy accumulated in tariff register 2."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 316, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x013C
+            unit: kWh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: t2_energy_active_forward
+            name: "Tariff 2 Forward Active Energy"
+            description: "System forward active energy accumulated in tariff register 2."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 318, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x013E
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: t2_energy_active_reverse
+            name: "Tariff 2 Reverse Active Energy"
+            description: "System reverse active energy accumulated in tariff register 2."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 320, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0140
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: t2_energy_reactive
+            name: "Tariff 2 Reactive Energy"
+            description: "System total active energy accumulated in tariff register 2."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 322, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0142
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: t2_energy_reactive_forward
+            name: "Tariff 2 Forward Reactive Energy"
+            description: "System forward active energy accumulated in tariff register 2."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 324, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0144
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: t2_energy_reactive_reverse
+            name: "Tariff 2 Reverse Reactive Energy"
+            description: "System reverse active energy accumulated in tariff register 2."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 326, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0146
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: t3_energy_active
+            name: "Tariff 3 Active Energy"
+            description: "System total active energy accumulated in tariff register 3."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 328, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0148
+            unit: kWh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: t3_energy_active_forward
+            name: "Tariff 3 Forward Active Energy"
+            description: "System forward active energy accumulated in tariff register 3."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 330, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x014A
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: t3_energy_active_reverse
+            name: "Tariff 3 Reverse Active Energy"
+            description: "System reverse active energy accumulated in tariff register 3."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 332, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x014C
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: t3_energy_reactive
+            name: "Tariff 3 Reactive Energy"
+            description: "System total active energy accumulated in tariff register 3."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 334, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x014E
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: t3_energy_reactive_forward
+            name: "Tariff 3 Forward Reactive Energy"
+            description: "System forward active energy accumulated in tariff register 3."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 336, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0150
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: t3_energy_reactive_reverse
+            name: "Tariff 3 Reverse Reactive Energy"
+            description: "System reverse active energy accumulated in tariff register 3."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 338, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0152
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: t4_energy_active
+            name: "Tariff 4 Active Energy"
+            description: "System total active energy accumulated in tariff register 4."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 340, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0154
+            unit: kWh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: t4_energy_active_forward
+            name: "Tariff 4 Forward Active Energy"
+            description: "System forward active energy accumulated in tariff register 4."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 342, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0156
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: t4_energy_active_reverse
+            name: "Tariff 4 Reverse Active Energy"
+            description: "System reverse active energy accumulated in tariff register 4."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 344, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0158
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: REVERSE, accumulation: LIFETIME }
+
+          - point_id: t4_energy_reactive
+            name: "Tariff 4 Reactive Energy"
+            description: "System total active energy accumulated in tariff register 4."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 346, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x015A
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: t4_energy_reactive_forward
+            name: "Tariff 4 Forward Reactive Energy"
+            description: "System forward active energy accumulated in tariff register 4."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 348, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x015C
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: FORWARD, accumulation: LIFETIME }
+
+          - point_id: t4_energy_reactive_reverse
+            name: "Tariff 4 Reverse Reactive Energy"
+            description: "System reverse active energy accumulated in tariff register 4."
+            access: READ_ONLY
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 350, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x015E
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: REVERSE, accumulation: LIFETIME }
+
+
+      # Matrix rows 0x0300-0x036B: eight 24-byte time-interval definitions on a
+      # 12-register stride, then the time-zone definition. All nine appear in
+      # both the read table (03H) and the write table (10H), but the matrix
+      # never says what the 24 bytes contain, so they stay raw byte strings.
+      - block_id: tou_intervals
+        name: "Time-of-Use Intervals"
+        space: HOLDING_REGISTER
+        start_offset: 768 # 0x0300
+        length_words: 108
+        points:
+          - point_id: time_interval_1
+            name: "Time Interval 1"
+            description: "Time-of-use interval definition 1, 24 raw bytes across twelve registers. The matrix never describes what is inside them."
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 768, length_words: 12, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0300
+            write: { behavior: DIRECT }
+
+          - point_id: time_interval_2
+            name: "Time Interval 2"
+            description: "Time-of-use interval definition 2, 24 raw bytes across twelve registers. The matrix never describes what is inside them."
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 780, length_words: 12, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x030C
+            write: { behavior: DIRECT }
+
+          - point_id: time_interval_3
+            name: "Time Interval 3"
+            description: "Time-of-use interval definition 3, 24 raw bytes across twelve registers. The matrix never describes what is inside them."
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 792, length_words: 12, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0318
+            write: { behavior: DIRECT }
+
+          - point_id: time_interval_4
+            name: "Time Interval 4"
+            description: "Time-of-use interval definition 4, 24 raw bytes across twelve registers. The matrix never describes what is inside them."
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 804, length_words: 12, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0324
+            write: { behavior: DIRECT }
+
+          - point_id: time_interval_5
+            name: "Time Interval 5"
+            description: "Time-of-use interval definition 5, 24 raw bytes across twelve registers. The matrix never describes what is inside them."
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 816, length_words: 12, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0330
+            write: { behavior: DIRECT }
+
+          - point_id: time_interval_6
+            name: "Time Interval 6"
+            description: "Time-of-use interval definition 6, 24 raw bytes across twelve registers. The matrix never describes what is inside them."
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 828, length_words: 12, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x033C
+            write: { behavior: DIRECT }
+
+          - point_id: time_interval_7
+            name: "Time Interval 7"
+            description: "Time-of-use interval definition 7, 24 raw bytes across twelve registers. The matrix never describes what is inside them."
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 840, length_words: 12, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0348
+            write: { behavior: DIRECT }
+
+          - point_id: time_interval_8
+            name: "Time Interval 8"
+            description: "Time-of-use interval definition 8, 24 raw bytes across twelve registers. The matrix never describes what is inside them."
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 852, length_words: 12, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0354
+            write: { behavior: DIRECT }
+
+          - point_id: time_zone
+            name: "Time Zone"
+            description: "Time-zone and season definition, 24 raw bytes across twelve registers. The matrix never describes what is inside them."
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 864, length_words: 12, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0360
+            write: { behavior: DIRECT }

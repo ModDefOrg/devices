@@ -1,0 +1,1660 @@
+# Source: "DDS353H-3 MODBUS registers.xls", the manufacturer's Modbus register
+# spreadsheet for the YTL DDS353H meter family. A third party got it out of the
+# manufacturer by mail and republished it in psy0rz/YTLmodbus:
+# https://github.com/psy0rz/YTLmodbus
+# Part of the ModDef blessed device registry.
+#
+# The manufacturer is Zhejiang Yongtailong Electronic Co., Ltd (YTL),
+# www.ytl-e.com. YTL publishes no Modbus document for this family at all. The
+# register map survives only in distributor and third-party documents.
+#
+# STATUS: community-sourced, NOT vendor-confirmed. The spreadsheet is YTL's own
+# file, but YTL never published it, and it reads like a working draft. The
+# address column has broken #N/A formulas in it. One address is typed with a
+# letter O ("81OEH" for 0x810E). One register is mislabelled ("System Active
+# Power Qsum" for the reactive sum). Several rows have empty address cells.
+# Nothing anywhere carries a revision number or a date.
+#
+# Cross-checked against three other sources:
+#
+#   Carrel Electrade (NZ distributor), "DDS353-H2-M Modbus Registers",
+#   2022-08-29. A purpose-written register document for the configuration
+#   registers and the single-phase measurements, addressed in Modicon 4xxxx
+#   form (4 + offset + 1). It is the only source that says how the packed
+#   configuration words are laid out, and it contradicts what the
+#   spreadsheet's paired defaults imply. The live link is dead; archived copy:
+#   https://web.archive.org/web/20260130171609/
+#   https://carrel-electrade.co.nz/transducers/pdf/dds353h2mbr.pdf
+#
+#   AGG Software, "YTL (DDS353H,5281,5282,5283) MODBUS registers map". An
+#   independent list of the measurement and energy registers with units and
+#   data types. It pins down the tariff-energy addresses that the spreadsheet
+#   left blank, both demand registers at 0xA030 and 0xA032, and the signed
+#   16-bit temperature and clock-trim registers.
+#
+#   A Home Assistant thread where someone reads a live DDS353H at 9600 8E1,
+#   using registers 304, 305, 313, 320 and 40960 with the scalings used here:
+#   https://community.home-assistant.io/t/218241
+#
+# Wherever those three overlap the spreadsheet they agree with what is
+# transcribed here. None of them covers the time-of-use schedule area
+# (0x8100-0x81A3) or the undocumented registers at 0xA030, 0xFF00 and 0xFFF0,
+# so those are the parts to treat with the most caution.
+#
+# Device family, from the YTLmodbus README and the spreadsheet's "Single Phase"
+# column. All are DIN-rail kWh meters with an S0 pulse output and four-rate
+# time-of-use metering:
+#
+#   DDS353H-1 / DDS353H-2 / DDS353H-3
+#   YTL5281 / YTL5282 / YTL5283
+#
+# They are rebranded and resold too, for example as EMAT meters by Elektramat.
+# The single-phase models carry only the phase-1 instantaneous registers; see
+# the `dds353h-single-phase` variant.
+#
+# Encoding, from the spreadsheet:
+#   - Every sheet declares "03H function code Read, 10H/06H function code
+#     Write", so the whole map lives in HOLDING_REGISTER space.
+#   - Addresses are raw 0-based protocol offsets written in hex, so the ModDef
+#     offset is just the spreadsheet's hex address. Each point carries that
+#     address as a trailing comment. The reference implementation confirms the
+#     convention: scan.py pings register 272 (0x110), and ytl.py reads 0x130,
+#     0x139 and 0xA000 straight through minimalmodbus.
+#   - "L address is High Byte Data" means the lower address holds the high word
+#     of a two-register value, so BIG_ENDIAN bytes with WORD_BIG_ENDIAN words.
+#     The reference implementation assumes the same thing, since it calls
+#     minimalmodbus read_long() at its default big-endian order.
+#   - The "Unit" column gives the resolution, e.g. "0.01V" or "0.001kW". Each
+#     one becomes a transform.scale that keeps the column's unit: 0.01V is unit
+#     V with scale 1/100, 0.001kW is unit kW with scale 1/1000. The reference
+#     implementation backs up the energy scaling, dividing 0xA000 and 0xA01E by
+#     100 to get kWh.
+#   - Write function code. The spreadsheet says the parameter area takes "10H,
+#     06H". Carrel is explicit that only function 16 works: "Note write single
+#     register function 6 not supported." The config points carry
+#     allowed_function_codes [3, 16], which is what both sources agree on.
+#   - Line settings. Both documents say 9600 8N1 (the spreadsheet's "N81",
+#     Carrel's "8 bit no parity 1 stop bit"). Both field reports, the reference
+#     implementation and the Home Assistant thread, run these meters at 9600
+#     8E1 instead, and so does the sister YTL5300 document. Try 8E1 first.
+#   - Frequency range. The spreadsheet says 4500-6500, Carrel says 4500-6000.
+#
+# Where the spreadsheet runs out and this profile fills in the gap. Check these
+# against hardware before trusting them:
+#   - Registers 0x0112, 0x0113 and 0x0114 each pack two settings into one word,
+#     and the spreadsheet names both settings with a paired default (e.g.
+#     "FF, 01") without ever saying which byte is which. Carrel settles it: the
+#     first-listed setting is the high byte, the second is the low byte ("MSB
+#     parameter display bits ... LSB measurement mode", default 0xff01; "MSB
+#     kWh/kvarh display format ... LSB display parameter scrolling time",
+#     default 0x0105; "LSB pulse output select"). That is the layout used here,
+#     and it is the reverse of what the paired defaults suggest on their own.
+#   - Carrel documents the 0x0113 digit split as 0 = 6+0 and 1 = 5+1 only. But
+#     the spreadsheet defaults that byte to 02, and the reference
+#     implementation annotates the register as "number of decimals (0, 1, 2)",
+#     so 02 = 4+2 stays in the enum.
+#   - Pulse constant. Carrel puts the LED flash rate at Modicon 40280, which by
+#     its own 4 + offset + 1 addressing is 0x0117, one register below the
+#     spreadsheet's 0x0118. This profile keeps 0x0118, because the reference
+#     implementation reads 0x0118 on a live meter and gets 1000, the documented
+#     default.
+#   - The weekend schedule (0x8110) and the holiday schedule (0x8130) each get
+#     one row plus a range marker, "~ 811FH" and "~ 813FH". Both ranges are 16
+#     registers, the same size as the daily schedule at 0x8100 that the
+#     spreadsheet does spell out, so both are transcribed as the same eight
+#     (start time, tariff) pairs.
+#   - The system-clock rows at 0x8120 have #N/A instead of an address for the
+#     second and third register. They are named "Year, Month", "Day, Hour" and
+#     "Minute, Second", so they sit at 0x8120, 0x8121 and 0x8122 and are
+#     modelled as one six-byte SPLIT_FIELDS datetime.
+#   - The tariff-energy rows at 0xA002-0xA008 and 0xA020-0xA026 have empty
+#     address cells. Their addresses follow from the 2-register stride, the
+#     documented totals at 0xA000 and 0xA01E, and the "Keep" (reserved) range
+#     at 0xA00A-0xA01D. AGG Software lists exactly those addresses
+#     (40962/4/6/8 and 40992/4/6/8), so the reconstruction holds.
+#   - 0xA030 "Last 1 month demand", 0xA032 "Last 2 months demand", 0xFF00
+#     "Temperature", 0xFF01 "Time offset" and 0xFFF0 "Energy" come with no data
+#     type and mostly no divider. Each one uses the narrowest encoding that
+#     fits, with no scaling; see the individual descriptions. AGG Software
+#     gives both demand registers as 32-bit and the temperature and clock-trim
+#     registers as signed 16-bit, which is what this profile uses. It offers no
+#     scaling for them either.
+#   - The energy registers change meaning with the measurement mode. Per
+#     Carrel, when the meter runs in forward/reverse active energy mode
+#     (register 0x0112 low byte = 0), "the reactive energy registers become the
+#     reverse active energy registers", and the active registers hold forward
+#     active energy. The measurands and units on those points describe the
+#     default active + reactive mode.
+#   - The "Real time data read" sheet is headed "Address for Real time data
+#     area: 9000H-9FFFH", but every address in it falls between 0x0130 and
+#     0x015B, which is also what the reference implementation reads. The header
+#     line is wrong and is ignored here.
+#
+# `moddef lint` reports MDW402 ("defined but never used") for four enums that
+# points reference through `fields` rather than `value_type`. The linter only
+# walks `value_type`, so it misses them. The references are real.
+
+doc_id: ytl.dds353h
+name: YTL DDS353H / YTL528x Multi-Tariff Energy Meter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  - type_id: baud_rate
+    name: Baud Rate
+    description: Serial line speed code (register 0x0111)
+    values:
+      - { value: 1, name: BPS_1200, description: 1200 bps }
+      - { value: 2, name: BPS_2400, description: 2400 bps }
+      - { value: 3, name: BPS_4800, description: 4800 bps }
+      - { value: 4, name: BPS_9600, description: "9600 bps (default)" }
+
+  - type_id: measurement_mode
+    name: Measurement Mode
+    description: Which pair of energy registers the meter accumulates (register 0x0112, low byte bit 0)
+    values:
+      - { value: 0, name: FORWARD_REVERSE_ACTIVE, description: "Forward and reverse active energy: the reactive energy registers hold reverse active energy in kWh instead" }
+      - { value: 1, name: ACTIVE_AND_REACTIVE, description: "Active and reactive energy (default)" }
+
+  - type_id: display_digits
+    name: Display Digit Split
+    description: Split of the six LCD energy digits into integer and decimal places (register 0x0113, high byte)
+    values:
+      - { value: 0, name: SPLIT_6_0, description: "6 integer digits, no decimals" }
+      - { value: 1, name: SPLIT_5_1, description: "5 integer digits, 1 decimal" }
+      - { value: 2, name: SPLIT_4_2, description: "4 integer digits, 2 decimals; the DDS353H-3 spreadsheet gives this as the default, the Carrel DDS353H-2-M document lists only 0 and 1" }
+
+  - type_id: tariff_setting
+    name: Tariff Setting Permission
+    description: Whether the time-of-use schedule may be changed (register 0x0114, high byte)
+    values:
+      - { value: 0, name: LOCKED, description: Tariff schedule cannot be set }
+      - { value: 1, name: UNLOCKED, description: "Tariff schedule can be set (default)" }
+
+  - type_id: pulse_output_type
+    name: Pulse Output Type
+    description: What the S0 pulse output / LED flash signals (register 0x0114, low byte)
+    values:
+      - { value: 0, name: ACTIVE_ENERGY, description: "Active energy, or forward active energy in forward/reverse mode (default)" }
+      - { value: 1, name: REACTIVE_ENERGY, description: "Reactive energy; there is no LED flash if this is selected while the meter is in forward/reverse active energy mode" }
+      - { value: 2, name: SECOND_PULSE, description: One pulse per second }
+
+  - type_id: tariff_rate
+    name: Tariff Rate
+    description: Rate applied to a time-of-use period
+    values:
+      - { value: 0, name: UNUSED, description: Period unused }
+      - { value: 1, name: SHARP, description: Sharp rate }
+      - { value: 2, name: PEAK, description: Peak rate }
+      - { value: 3, name: VALLEY, description: Valley rate }
+      - { value: 4, name: FLAT, description: Flat rate }
+
+devices:
+  - device_id: ytl-dds353h
+    vendor: YTL
+    model: DDS353H
+    supported_transports:
+      - MODBUS_RTU
+    blocks:
+
+      # Spreadsheet sheet "Parameters setting part", first table. Nothing
+      # documents 0x0115-0x0117 or 0x0119-0x011B.
+      - block_id: config
+        name: "System Parameters"
+        space: HOLDING_REGISTER
+        start_offset: 272 # 0x0110
+        length_words: 13
+        points:
+          - point_id: modbus_address
+            name: "Modbus Address"
+            description: "Modbus slave address. The high byte is unused and reads back as 0. Address 0 is the broadcast address, so it is not a valid address for the meter itself."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 272, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0110
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 1, denominator: 1 }, max_value: { numerator: 247, denominator: 1 }, safety_note: "Changing the address drops the current connection; the meter answers on the new address immediately" } }
+
+          - point_id: baud_rate
+            name: "Baud Rate"
+            description: "Serial line speed. The high byte is unused and reads back as 0. Defaults to 4, i.e. 9600 bps."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: baud_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 273, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0111
+            write: { behavior: DIRECT, constraints: { allowed_values: [1, 2, 3, 4], safety_note: "Changing the baud rate drops the current connection" } }
+
+          - point_id: display_setting
+            name: "Display Pages and Measurement Mode"
+            description: "Which measurements the LCD scrolls through, one bit per page in the high byte, plus the energy measurement mode in bit 0 of the low byte. Defaults to 0xFF01: all eight pages on, active and reactive energy. Bit 0 of the page bitmap is always shown whatever you set."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 274, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0112
+            fields:
+              - field_id: display_pages
+                name: "Enabled Display Pages"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { flags: { bits: { "0": active_energy, "1": reactive_energy, "2": voltage, "3": current, "4": active_power, "5": reactive_power, "6": apparent_power, "7": power_factor } } }
+              - field_id: measurement_mode
+                name: "Measurement Mode"
+                bit_offset: 0
+                bit_length: 1
+                storage_type: U16
+                value_type: { enum_ref: { type_id: measurement_mode } }
+            write: { behavior: DIRECT }
+
+          - point_id: display_format
+            name: "Display Format"
+            description: "Energy display digit split in the high byte, page scrolling interval in the low byte in seconds, 0 to 10. The two sources disagree on the default: Carrel says 0x0105, meaning 5+1 digits and 5 s, while the DDS353H-3 spreadsheet puts 02 in the digit byte for 4+2 digits."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 275, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0113
+            fields:
+              - field_id: display_digits
+                name: "Display Digit Split"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { enum_ref: { type_id: display_digits } }
+              - field_id: scroll_time
+                name: "Page Scrolling Time"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: s
+            write: { behavior: DIRECT }
+
+          - point_id: output_setting
+            name: "Tariff Lock and Pulse Output Type"
+            description: "Whether the time-of-use schedule is writable, in the high byte, and what the S0 pulse output emits, in the low byte. The DDS353H-3 spreadsheet defaults it to 0x0100: schedule unlocked, active energy pulses. Carrel covers only the low byte and gives the whole register a default of 0x0000."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 276, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0114
+            fields:
+              - field_id: tariff_setting
+                name: "Tariff Setting Permission"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { enum_ref: { type_id: tariff_setting } }
+              - field_id: pulse_output_type
+                name: "Pulse Output Type"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { enum_ref: { type_id: pulse_output_type } }
+            write: { behavior: DIRECT }
+
+          - point_id: pulse_constant
+            name: "Pulse Constant"
+            description: "S0 LED flash and pulse output rate, in pulses per kWh. Permitted values are 100, 1000 (the default) and 2000. The address is disputed: the Carrel DDS353H-2-M document puts it one register lower at 0x0117, but the spreadsheet says 0x0118 and the reference implementation reads 0x0118 on a live meter and gets 1000, the documented default."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 280, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x0118
+            write: { behavior: DIRECT, constraints: { allowed_values: [100, 1000, 2000] } }
+
+          - point_id: ct_ratio
+            name: "CT Ratio"
+            description: "Current transformer ratio. The spreadsheet gives the address and read/write access, but no range, no default and no data type."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 284, byte_order: BIG_ENDIAN, allowed_function_codes: [3, 16] } # 0x011C
+            write: { behavior: DIRECT, constraints: { safety_note: "Changing the CT ratio rescales every current, power and energy reading" } }
+
+
+      # Spreadsheet sheet "Real time data read". Nothing documents 0x0134-0x0138
+      # or 0x013F. The "Single Phase" column marks which registers also exist on
+      # the single-phase models; the dds353h-single-phase variant removes the
+      # rest.
+      - block_id: realtime
+        name: "Instantaneous Measurements"
+        space: HOLDING_REGISTER
+        start_offset: 304 # 0x0130
+        length_words: 44
+        points:
+          - point_id: frequency
+            name: "Frequency"
+            description: "Grid frequency. Documented range 4500-6500 (45.00-65.00 Hz)."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 304, byte_order: BIG_ENDIAN } # 0x0130
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+
+          - point_id: voltage_l1_n
+            name: "Voltage L1-N"
+            description: "Phase 1 RMS voltage to neutral."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 305, byte_order: BIG_ENDIAN } # 0x0131
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L1_N }
+
+          - point_id: voltage_l2_n
+            name: "Voltage L2-N"
+            description: "Phase 2 RMS voltage to neutral."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 306, byte_order: BIG_ENDIAN } # 0x0132
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L2_N }
+
+          - point_id: voltage_l3_n
+            name: "Voltage L3-N"
+            description: "Phase 3 RMS voltage to neutral."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 307, byte_order: BIG_ENDIAN } # 0x0133
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: V
+            measurand: { base_quantity: voltage, phase_ref: L3_N }
+
+          - point_id: current_l1
+            name: "Current L1"
+            description: "Phase (wire) 1 RMS current."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 313, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0139
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L1 }
+
+          - point_id: current_l2
+            name: "Current L2"
+            description: "Phase (wire) 2 RMS current."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 315, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x013B
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L2 }
+
+          - point_id: current_l3
+            name: "Current L3"
+            description: "Phase (wire) 3 RMS current."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 317, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x013D
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            measurand: { base_quantity: current, phase_ref: L3 }
+
+          - point_id: active_power_l1
+            name: "Active Power L1"
+            description: "Phase 1 active power (P1(Phase A))."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 320, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0140
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L1 }
+
+          - point_id: active_power_l2
+            name: "Active Power L2"
+            description: "Phase 2 active power (P2(Phase B))."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 322, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0142
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L2 }
+
+          - point_id: active_power_l3
+            name: "Active Power L3"
+            description: "Phase 3 active power (P3(Phase C))."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 324, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0144
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, phase_ref: L3 }
+
+          - point_id: active_power_total
+            name: "Active Power Total"
+            description: "System active power (Psum), sum of the three phases."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 326, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0146
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kW
+            measurand: { base_quantity: active_power, aggregation: TOTAL }
+
+          - point_id: reactive_power_l1
+            name: "Reactive Power L1"
+            description: "Phase 1 reactive power (Q1(Phase A))."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 328, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0148
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L1 }
+
+          - point_id: reactive_power_l2
+            name: "Reactive Power L2"
+            description: "Phase 2 reactive power (Q2(Phase B))."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 330, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x014A
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L2 }
+
+          - point_id: reactive_power_l3
+            name: "Reactive Power L3"
+            description: "Phase 3 reactive power (Q3(Phase C))."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 332, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x014C
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+            measurand: { base_quantity: reactive_power, phase_ref: L3 }
+
+          - point_id: reactive_power_total
+            name: "Reactive Power Total"
+            description: "System reactive power (Qsum), sum of the three phases. The spreadsheet labels this row \"System Active Power Qsum\"; per its address and unit it is the reactive power sum."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 334, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x014E
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvar
+            measurand: { base_quantity: reactive_power, aggregation: TOTAL }
+
+          - point_id: apparent_power_l1
+            name: "Apparent Power L1"
+            description: "Phase 1 apparent power (S1(Phase A))."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 336, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0150
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kVA
+            measurand: { base_quantity: apparent_power, phase_ref: L1 }
+
+          - point_id: apparent_power_l2
+            name: "Apparent Power L2"
+            description: "Phase 2 apparent power (S2(Phase B))."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 338, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0152
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kVA
+            measurand: { base_quantity: apparent_power, phase_ref: L2 }
+
+          - point_id: apparent_power_l3
+            name: "Apparent Power L3"
+            description: "Phase 3 apparent power (S3(Phase C))."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 340, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0154
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kVA
+            measurand: { base_quantity: apparent_power, phase_ref: L3 }
+
+          - point_id: apparent_power_total
+            name: "Apparent Power Total"
+            description: "System apparent power (Ssum), sum of the three phases."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 342, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x0156
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kVA
+            measurand: { base_quantity: apparent_power, aggregation: TOTAL }
+
+          - point_id: power_factor_l1
+            name: "Power Factor L1"
+            description: "Phase 1 power factor (PF1). Negative for a capacitive load."
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 344, byte_order: BIG_ENDIAN } # 0x0158
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L1 }
+
+          - point_id: power_factor_l2
+            name: "Power Factor L2"
+            description: "Phase 2 power factor (PF2). Negative for a capacitive load."
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 345, byte_order: BIG_ENDIAN } # 0x0159
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L2 }
+
+          - point_id: power_factor_l3
+            name: "Power Factor L3"
+            description: "Phase 3 power factor (PF3). Negative for a capacitive load."
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 346, byte_order: BIG_ENDIAN } # 0x015A
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, phase_ref: L3 }
+
+          - point_id: power_factor_total
+            name: "Power Factor Total"
+            description: "System power factor (PF). Negative for a capacitive load."
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 347, byte_order: BIG_ENDIAN } # 0x015B
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor, aggregation: TOTAL }
+
+
+      # Spreadsheet sheet "Parameters setting part", second table. Eight
+      # (start time, tariff) pairs. Out of the box, period 1 starts at 07:00 on
+      # the Peak rate and period 2 at 22:00 on Valley; periods 3 to 8 are idle.
+      - block_id: tou_daily
+        name: "Time-of-Use Schedule (Daily)"
+        space: HOLDING_REGISTER
+        start_offset: 33024 # 0x8100
+        length_words: 16
+        points:
+          - point_id: tou_period1_start
+            name: "Daily Period 1 Start Time"
+            description: "Start time of daily schedule period 1, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33024, byte_order: BIG_ENDIAN } # 0x8100
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_period1_tariff
+            name: "Daily Period 1 Tariff"
+            description: "Tariff rate applied from the start of daily schedule period 1."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33025, byte_order: BIG_ENDIAN } # 0x8101
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_period2_start
+            name: "Daily Period 2 Start Time"
+            description: "Start time of daily schedule period 2, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33026, byte_order: BIG_ENDIAN } # 0x8102
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_period2_tariff
+            name: "Daily Period 2 Tariff"
+            description: "Tariff rate applied from the start of daily schedule period 2."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33027, byte_order: BIG_ENDIAN } # 0x8103
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_period3_start
+            name: "Daily Period 3 Start Time"
+            description: "Start time of daily schedule period 3, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33028, byte_order: BIG_ENDIAN } # 0x8104
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_period3_tariff
+            name: "Daily Period 3 Tariff"
+            description: "Tariff rate applied from the start of daily schedule period 3."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33029, byte_order: BIG_ENDIAN } # 0x8105
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_period4_start
+            name: "Daily Period 4 Start Time"
+            description: "Start time of daily schedule period 4, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33030, byte_order: BIG_ENDIAN } # 0x8106
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_period4_tariff
+            name: "Daily Period 4 Tariff"
+            description: "Tariff rate applied from the start of daily schedule period 4."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33031, byte_order: BIG_ENDIAN } # 0x8107
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_period5_start
+            name: "Daily Period 5 Start Time"
+            description: "Start time of daily schedule period 5, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33032, byte_order: BIG_ENDIAN } # 0x8108
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_period5_tariff
+            name: "Daily Period 5 Tariff"
+            description: "Tariff rate applied from the start of daily schedule period 5."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33033, byte_order: BIG_ENDIAN } # 0x8109
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_period6_start
+            name: "Daily Period 6 Start Time"
+            description: "Start time of daily schedule period 6, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33034, byte_order: BIG_ENDIAN } # 0x810A
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_period6_tariff
+            name: "Daily Period 6 Tariff"
+            description: "Tariff rate applied from the start of daily schedule period 6."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33035, byte_order: BIG_ENDIAN } # 0x810B
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_period7_start
+            name: "Daily Period 7 Start Time"
+            description: "Start time of daily schedule period 7, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33036, byte_order: BIG_ENDIAN } # 0x810C
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_period7_tariff
+            name: "Daily Period 7 Tariff"
+            description: "Tariff rate applied from the start of daily schedule period 7."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33037, byte_order: BIG_ENDIAN } # 0x810D
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_period8_start
+            name: "Daily Period 8 Start Time"
+            description: "Start time of daily schedule period 8, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33038, byte_order: BIG_ENDIAN } # 0x810E
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_period8_tariff
+            name: "Daily Period 8 Tariff"
+            description: "Tariff rate applied from the start of daily schedule period 8."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33039, byte_order: BIG_ENDIAN } # 0x810F
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+
+      # The spreadsheet prints one row (0x8110, "Start Time of Weekend") and the
+      # range marker "~ 811FH", nothing more. Those 16 registers are exactly the
+      # size of the daily schedule, so the same eight (start time, tariff) pairs
+      # are transcribed here. Unconfirmed; see the header.
+      - block_id: tou_weekend
+        name: "Time-of-Use Schedule (Weekend)"
+        space: HOLDING_REGISTER
+        start_offset: 33040 # 0x8110
+        length_words: 16
+        points:
+          - point_id: tou_weekend_period1_start
+            name: "Weekend Period 1 Start Time"
+            description: "Start time of weekend schedule period 1, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33040, byte_order: BIG_ENDIAN } # 0x8110
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_weekend_period1_tariff
+            name: "Weekend Period 1 Tariff"
+            description: "Tariff rate applied from the start of weekend schedule period 1."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33041, byte_order: BIG_ENDIAN } # 0x8111
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_weekend_period2_start
+            name: "Weekend Period 2 Start Time"
+            description: "Start time of weekend schedule period 2, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33042, byte_order: BIG_ENDIAN } # 0x8112
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_weekend_period2_tariff
+            name: "Weekend Period 2 Tariff"
+            description: "Tariff rate applied from the start of weekend schedule period 2."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33043, byte_order: BIG_ENDIAN } # 0x8113
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_weekend_period3_start
+            name: "Weekend Period 3 Start Time"
+            description: "Start time of weekend schedule period 3, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33044, byte_order: BIG_ENDIAN } # 0x8114
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_weekend_period3_tariff
+            name: "Weekend Period 3 Tariff"
+            description: "Tariff rate applied from the start of weekend schedule period 3."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33045, byte_order: BIG_ENDIAN } # 0x8115
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_weekend_period4_start
+            name: "Weekend Period 4 Start Time"
+            description: "Start time of weekend schedule period 4, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33046, byte_order: BIG_ENDIAN } # 0x8116
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_weekend_period4_tariff
+            name: "Weekend Period 4 Tariff"
+            description: "Tariff rate applied from the start of weekend schedule period 4."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33047, byte_order: BIG_ENDIAN } # 0x8117
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_weekend_period5_start
+            name: "Weekend Period 5 Start Time"
+            description: "Start time of weekend schedule period 5, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33048, byte_order: BIG_ENDIAN } # 0x8118
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_weekend_period5_tariff
+            name: "Weekend Period 5 Tariff"
+            description: "Tariff rate applied from the start of weekend schedule period 5."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33049, byte_order: BIG_ENDIAN } # 0x8119
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_weekend_period6_start
+            name: "Weekend Period 6 Start Time"
+            description: "Start time of weekend schedule period 6, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33050, byte_order: BIG_ENDIAN } # 0x811A
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_weekend_period6_tariff
+            name: "Weekend Period 6 Tariff"
+            description: "Tariff rate applied from the start of weekend schedule period 6."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33051, byte_order: BIG_ENDIAN } # 0x811B
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_weekend_period7_start
+            name: "Weekend Period 7 Start Time"
+            description: "Start time of weekend schedule period 7, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33052, byte_order: BIG_ENDIAN } # 0x811C
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_weekend_period7_tariff
+            name: "Weekend Period 7 Tariff"
+            description: "Tariff rate applied from the start of weekend schedule period 7."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33053, byte_order: BIG_ENDIAN } # 0x811D
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_weekend_period8_start
+            name: "Weekend Period 8 Start Time"
+            description: "Start time of weekend schedule period 8, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33054, byte_order: BIG_ENDIAN } # 0x811E
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_weekend_period8_tariff
+            name: "Weekend Period 8 Tariff"
+            description: "Tariff rate applied from the start of weekend schedule period 8."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33055, byte_order: BIG_ENDIAN } # 0x811F
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+
+      # The spreadsheet prints one row (0x8130, "Start Time of Holiday") and the
+      # range marker "~ 813FH", nothing more. Transcribed as eight
+      # (start time, tariff) pairs, like the daily schedule. Unconfirmed; see
+      # the header.
+      - block_id: tou_holiday
+        name: "Time-of-Use Schedule (Holiday)"
+        space: HOLDING_REGISTER
+        start_offset: 33072 # 0x8130
+        length_words: 16
+        points:
+          - point_id: tou_holiday_period1_start
+            name: "Holiday Period 1 Start Time"
+            description: "Start time of holiday schedule period 1, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33072, byte_order: BIG_ENDIAN } # 0x8130
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_holiday_period1_tariff
+            name: "Holiday Period 1 Tariff"
+            description: "Tariff rate applied from the start of holiday schedule period 1."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33073, byte_order: BIG_ENDIAN } # 0x8131
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_holiday_period2_start
+            name: "Holiday Period 2 Start Time"
+            description: "Start time of holiday schedule period 2, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33074, byte_order: BIG_ENDIAN } # 0x8132
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_holiday_period2_tariff
+            name: "Holiday Period 2 Tariff"
+            description: "Tariff rate applied from the start of holiday schedule period 2."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33075, byte_order: BIG_ENDIAN } # 0x8133
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_holiday_period3_start
+            name: "Holiday Period 3 Start Time"
+            description: "Start time of holiday schedule period 3, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33076, byte_order: BIG_ENDIAN } # 0x8134
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_holiday_period3_tariff
+            name: "Holiday Period 3 Tariff"
+            description: "Tariff rate applied from the start of holiday schedule period 3."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33077, byte_order: BIG_ENDIAN } # 0x8135
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_holiday_period4_start
+            name: "Holiday Period 4 Start Time"
+            description: "Start time of holiday schedule period 4, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33078, byte_order: BIG_ENDIAN } # 0x8136
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_holiday_period4_tariff
+            name: "Holiday Period 4 Tariff"
+            description: "Tariff rate applied from the start of holiday schedule period 4."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33079, byte_order: BIG_ENDIAN } # 0x8137
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_holiday_period5_start
+            name: "Holiday Period 5 Start Time"
+            description: "Start time of holiday schedule period 5, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33080, byte_order: BIG_ENDIAN } # 0x8138
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_holiday_period5_tariff
+            name: "Holiday Period 5 Tariff"
+            description: "Tariff rate applied from the start of holiday schedule period 5."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33081, byte_order: BIG_ENDIAN } # 0x8139
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_holiday_period6_start
+            name: "Holiday Period 6 Start Time"
+            description: "Start time of holiday schedule period 6, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33082, byte_order: BIG_ENDIAN } # 0x813A
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_holiday_period6_tariff
+            name: "Holiday Period 6 Tariff"
+            description: "Tariff rate applied from the start of holiday schedule period 6."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33083, byte_order: BIG_ENDIAN } # 0x813B
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_holiday_period7_start
+            name: "Holiday Period 7 Start Time"
+            description: "Start time of holiday schedule period 7, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33084, byte_order: BIG_ENDIAN } # 0x813C
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_holiday_period7_tariff
+            name: "Holiday Period 7 Tariff"
+            description: "Tariff rate applied from the start of holiday schedule period 7."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33085, byte_order: BIG_ENDIAN } # 0x813D
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+          - point_id: tou_holiday_period8_start
+            name: "Holiday Period 8 Start Time"
+            description: "Start time of holiday schedule period 8, hour in the high byte (0-23) and minute in the low byte (0-59)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 33086, byte_order: BIG_ENDIAN } # 0x813E
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: tou_holiday_period8_tariff
+            name: "Holiday Period 8 Tariff"
+            description: "Tariff rate applied from the start of holiday schedule period 8."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: tariff_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 33087, byte_order: BIG_ENDIAN } # 0x813F
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4] } }
+
+
+      # Spreadsheet sheet "Parameters setting part", third table. Three registers
+      # holding two plain byte fields each: Year/Month, Day/Hour, Minute/Second.
+      # No BCD. Only the first address made it into print; the other two rows
+      # have a broken #N/A formula where the address should be.
+      - block_id: clock
+        name: "System Clock"
+        space: HOLDING_REGISTER
+        start_offset: 33056 # 0x8120
+        length_words: 3
+        points:
+          - point_id: rtc_datetime
+            name: "Real-Time Clock"
+            description: "Meter clock, packed as six bytes across three registers: year (00-99), month (1-12), day (1-31), hour (0-23), minute (0-59), second (0-59), most significant byte first."
+            access: READ_WRITE
+            storage_type: BYTES_RAW
+            value_type: { primitive: DATETIME }
+            mapping: { space: HOLDING_REGISTER, offset: 33056, length_words: 3, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x8120
+            datetime: { encoding: SPLIT_FIELDS, width: U48 }
+            write: { behavior: DIRECT }
+
+
+      # Spreadsheet row "8140H | Holiday List*100 | MMDD": one register per
+      # holiday date, 100 entries. The repeat count and the MMDD packing are
+      # documented. The write function code is not, so this assumes the 10H that
+      # the rest of the parameter area uses.
+      - block_id: holiday_list
+        name: "Holiday List"
+        space: HOLDING_REGISTER
+        start_offset: 33088 # 0x8140
+        length_words: 100
+        points:
+          - point_id: holiday_dates
+            name: "Holiday Dates"
+            description: "100 holiday dates, one register each, packed as month in the high byte and day in the low byte (MMDD). An unused entry reads 0."
+            access: READ_WRITE
+            storage_type: U16
+            value_type:
+              array:
+                element_type: { primitive: UINT32 }
+                length: 100
+            mapping: { space: HOLDING_REGISTER, offset: 33088, length_words: 100, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN, stride_words: 1 } # 0x8140
+            write: { behavior: DIRECT }
+
+
+      # Spreadsheet sheet "Multi tariff data area". 0xA00A-0xA01D are marked
+      # "Keep" (reserved) and nothing documents 0xA028-0xA02F. Every energy
+      # register runs 0 to 99999999, i.e. 0 to 999999.99 kWh or kvarh. What the
+      # active registers actually count depends on the measurement mode in
+      # register 0x0112.
+      - block_id: energy
+        name: "Multi-Tariff Energy Registers"
+        space: HOLDING_REGISTER
+        start_offset: 40960 # 0xA000
+        length_words: 52
+        points:
+          - point_id: energy_active_total
+            name: "Total Active Energy"
+            description: "Present total active energy across all four tariffs. Put the meter in forward/reverse active energy mode (register 0x0112, low byte 0) and this register holds total FORWARD active energy instead."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40960, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA000
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, aggregation: TOTAL, accumulation: LIFETIME }
+
+          - point_id: t1_energy_active
+            name: "Tariff 1 Active Energy"
+            description: "Present active energy accumulated in tariff register 1. In forward/reverse active energy mode it counts forward active energy instead."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40962, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA002
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: t2_energy_active
+            name: "Tariff 2 Active Energy"
+            description: "Present active energy accumulated in tariff register 2. In forward/reverse active energy mode it counts forward active energy instead."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40964, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA004
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: t3_energy_active
+            name: "Tariff 3 Active Energy"
+            description: "Present active energy accumulated in tariff register 3. In forward/reverse active energy mode it counts forward active energy instead."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40966, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA006
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: t4_energy_active
+            name: "Tariff 4 Active Energy"
+            description: "Present active energy accumulated in tariff register 4. In forward/reverse active energy mode it counts forward active energy instead."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40968, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA008
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, accumulation: LIFETIME }
+
+          - point_id: energy_reactive_total
+            name: "Total Reactive Energy"
+            description: "Present total reactive energy across all four tariffs. Put the meter in forward/reverse active energy mode (register 0x0112, low byte 0) and this register holds total REVERSE ACTIVE energy in kWh instead, at which point the unit given here no longer applies."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40990, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA01E
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, aggregation: TOTAL, accumulation: LIFETIME }
+
+          - point_id: t1_energy_reactive
+            name: "Tariff 1 Reactive Energy"
+            description: "Present reactive energy accumulated in tariff register 1. In forward/reverse active energy mode it holds reverse active energy in kWh instead, at which point the unit given here no longer applies."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40992, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA020
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: t2_energy_reactive
+            name: "Tariff 2 Reactive Energy"
+            description: "Present reactive energy accumulated in tariff register 2. In forward/reverse active energy mode it holds reverse active energy in kWh instead, at which point the unit given here no longer applies."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40994, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA022
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: t3_energy_reactive
+            name: "Tariff 3 Reactive Energy"
+            description: "Present reactive energy accumulated in tariff register 3. In forward/reverse active energy mode it holds reverse active energy in kWh instead, at which point the unit given here no longer applies."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40996, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA024
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: t4_energy_reactive
+            name: "Tariff 4 Reactive Energy"
+            description: "Present reactive energy accumulated in tariff register 4. In forward/reverse active energy mode it holds reverse active energy in kWh instead, at which point the unit given here no longer applies."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 40998, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA026
+            transform: { scale: { numerator: 1, denominator: 100 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, accumulation: LIFETIME }
+
+          - point_id: demand_last_month_1
+            name: "Demand, 1 Month Ago"
+            description: "Recorded demand for the month before the current one. The spreadsheet gives an address and a label and nothing else: no data type, no range, no divider, no unit. Transcribed as an unscaled two-register unsigned value."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 41008, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA030
+            measurand: { base_quantity: active_power, aggregation: MAXIMUM, accumulation: MONTHLY }
+
+          - point_id: demand_last_month_2
+            name: "Demand, 2 Months Ago"
+            description: "Recorded demand for two months before the current one. The spreadsheet gives an address and a label and nothing else: no data type, no range, no divider, no unit. Transcribed as an unscaled two-register unsigned value."
+            access: READ_ONLY
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 41010, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0xA032
+            measurand: { base_quantity: active_power, aggregation: MAXIMUM, accumulation: MONTHLY }
+
+
+      # Two rows at the end of the "Multi tariff data area" sheet. Both come with
+      # a unit but no data type and no divider.
+      - block_id: diagnostics
+        name: "Temperature and Clock Correction"
+        space: HOLDING_REGISTER
+        start_offset: 65280 # 0xFF00
+        length_words: 2
+        points:
+          - point_id: temperature
+            name: "Internal Temperature"
+            description: "Meter internal temperature. The spreadsheet gives the unit, degrees Celsius, but no data type and no divider. Transcribed as an unscaled signed register."
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 65280, byte_order: BIG_ENDIAN } # 0xFF00
+            unit: degC
+            measurand: { base_quantity: temperature }
+
+          - point_id: clock_correction
+            name: "Clock Correction"
+            description: "Real-time-clock trim, documented with the unit \"S/D\", seconds per day. The spreadsheet gives no data type, no range and no divider. Transcribed as an unscaled signed register."
+            access: READ_WRITE
+            storage_type: S16
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 65281, byte_order: BIG_ENDIAN } # 0xFF01
+            write: { behavior: DIRECT }
+
+
+      # The final row of the "Multi tariff data area" sheet reads, in full,
+      # "0xfff0 | Energy | W". A write-only register with no documented data
+      # type, range or meaning. Kept as one write-only register so the address
+      # is not lost. Do not write to it before confirming what it does.
+      - block_id: energy_preset
+        name: "Energy Preset"
+        space: HOLDING_REGISTER
+        start_offset: 65520 # 0xFFF0
+        length_words: 1
+        points:
+          - point_id: energy_preset
+            name: "Energy Preset"
+            description: "Undocumented write-only energy register. The spreadsheet lists the address and write access and stops there. Most likely an energy preset or a clear. Not safe to use without confirming on hardware first."
+            access: WRITE_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 65520, byte_order: BIG_ENDIAN } # 0xFFF0
+            write: { behavior: DIRECT, constraints: { safety_note: "Undocumented register on an MID-relevant energy counter; writing it may alter or clear billing registers" } }
+
+
+    variants:
+      # The "Single Phase" column of the "Real time data read" sheet marks seven
+      # instantaneous registers as present on the single-phase models:
+      # frequency, V1, I1, P1, Q1, S1 and PF1. Everything for phase 2, phase 3
+      # and the system sums is unmarked, so this variant drops it. The
+      # parameter, tariff-schedule, clock and energy blocks carry no per-phase
+      # marking at all and stay as they are in the base profile.
+      - variant_id: dds353h-single-phase
+        name: DDS353H / YTL528x (single phase)
+        base_device_id: ytl-dds353h
+        removals:
+          - voltage_l2_n
+          - voltage_l3_n
+          - current_l2
+          - current_l3
+          - active_power_l2
+          - active_power_l3
+          - active_power_total
+          - reactive_power_l2
+          - reactive_power_l3
+          - reactive_power_total
+          - apparent_power_l2
+          - apparent_power_l3
+          - apparent_power_total
+          - power_factor_l2
+          - power_factor_l3
+          - power_factor_total

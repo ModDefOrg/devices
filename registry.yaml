@@ -620,3 +620,70 @@ devices:
   - device_status
   - fault_code
   - alarm_status
+- vendor: YTL
+  model: DDS353H / YTL528x (multi-tariff)
+  category: energy-meter
+  doc_id: ytl.dds353h
+  profile: energy-meter/ytl-dds353h/ytl-dds353h.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 95
+  status: unverified
+  source: '"DDS353H-3 MODBUS registers.xls", the manufacturer''s own register spreadsheet, obtained
+    by a third party and republished in psy0rz/YTLmodbus — system parameters, the eight-period
+    time-of-use / weekend / holiday schedules and the 100-entry holiday list, the system clock, the
+    instantaneous block (frequency, per-phase voltage/current/active/reactive/apparent power and
+    power factor plus system sums), and the multi-tariff energy area (total and T1-T4 active and
+    reactive registers, monthly demand, temperature, clock trim). Covers DDS353H-1/-2/-3 and
+    YTL5281/5282/5283; the `dds353h-single-phase` variant drops the phase 2/3 and system-sum
+    instantaneous registers that the spreadsheet marks as three-phase only. NOT vendor-confirmed:
+    YTL (Zhejiang Yongtailong) publishes no Modbus document for this family, and the spreadsheet is
+    visibly unfinished (broken formulas, a typo''d address, blank address cells, a mislabelled
+    register). Cross-checked against the Carrel Electrade "DDS353-H2-M Modbus Registers" distributor
+    document (which supplies the byte layout of the packed config words and the FC16-only write
+    rule) and the AGG Software register map (which confirms the tariff-energy, demand, temperature
+    and clock-trim registers). The profile header lists every remaining place it had to interpret
+    rather than read'
+  source_url: https://github.com/psy0rz/YTLmodbus
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - reactive_power
+  - apparent_power
+  - power_factor
+  - frequency
+  - energy_active
+  - energy_reactive
+  - temperature
+- vendor: YTL
+  model: YTL5300 / DTS353F-2 (three-phase)
+  category: energy-meter
+  doc_id: ytl.5300
+  profile: energy-meter/ytl-5300/ytl-5300.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 92
+  status: unverified
+  source: '"YTL5300 registry matrix.xls", the manufacturer''s own register matrix, obtained by a
+    third party and republished in psy0rz/YTLmodbus — identification and configuration, the
+    IEEE-754 float instantaneous block (per-phase voltage/current/active/reactive/apparent power
+    and power factor plus system totals, frequency), the full energy area (total, forward and
+    reverse active and reactive energy as system + per-phase, and the same six registers per tariff
+    for T1-T4), the clock, and the eight time-of-use interval definitions. Covers YTL5300 and
+    DTS353F-2. NOT vendor-confirmed: YTL (Zhejiang Yongtailong) publishes no Modbus document for
+    this family, and the matrix is a bare address list with no unit column, no value ranges and an
+    inconsistent register index. The same matrix is hosted publicly by the distributor Elektramat
+    (article 5299) and independently transcribed by cFos eMobility; the units come from the vendor
+    DTS353F-1/2/3 user manual''s LCD display list — see the profile header'
+  source_url: https://github.com/psy0rz/YTLmodbus
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - reactive_power
+  - apparent_power
+  - power_factor
+  - frequency
+  - energy_active
+  - energy_reactive
