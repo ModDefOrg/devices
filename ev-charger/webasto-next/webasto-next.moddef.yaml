@@ -17,9 +17,18 @@
 #     and the writable control registers (safe current, comms timeout, charge
 #     power/current setpoints, start/cancel command, communication life bit).
 
+#
+# Commands (spec 11.7). Register 5006 is edge triggered, not level triggered:
+# the document says a value of 1 starts "only one charging session (also if
+# value stays at 1)", and that another session starts only "when value changes
+# to 0 and then to 1". Writing 1 twice therefore does nothing the second time.
+# The two commands here write 0 first so the edge is guaranteed. 0 is the
+# document's "no action" value, so the leading write is safe against a session
+# that is already running.
+
 doc_id: webasto.next
 name: Webasto NEXT AC Wallbox
-version: 1.0.0
+version: 1.1.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
@@ -365,3 +374,30 @@ devices:
             value_type: { primitive: UINT32 }
             mapping: { space: HOLDING_REGISTER, offset: 6000, length_words: 1, byte_order: BIG_ENDIAN }
             write: { behavior: DIRECT }
+
+    commands:
+      - command_id: start_charging_session
+        name: "Start Charging Session"
+        description: "Start a charging session on register 5006, writing 0 and then 1 so the 0-to-1 edge the charger looks for is always produced. Without the leading 0 a second session never starts, because the register keeps the value 1 from the first one. Set charge_current_setpoint or charge_power_setpoint first if the session needs a limit; the document does not tie those writes to this one."
+        steps:
+          - name: clear
+            write: { trigger: { point_id: charge_command, value: 0 } }
+          - name: start
+            write: { trigger: { point_id: charge_command, value: 1 } }
+        results:
+          - field: charge_state
+            from: charge_state
+            value_type: { primitive: UINT32 }
+
+      - command_id: cancel_charging_session
+        name: "Cancel Charging Session"
+        description: "Cancel the running charging session on register 5006, writing 0 and then 2 for the same reason start_charging_session writes 0 and then 1: the register is edge triggered and holding 2 cancels only one session."
+        steps:
+          - name: clear
+            write: { trigger: { point_id: charge_command, value: 0 } }
+          - name: cancel
+            write: { trigger: { point_id: charge_command, value: 2 } }
+        results:
+          - field: charge_state
+            from: charge_state
+            value_type: { primitive: UINT32 }

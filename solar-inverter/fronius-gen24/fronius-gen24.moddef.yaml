@@ -45,9 +45,25 @@
 # only), the meter models (separate device behind its own Modbus unit id),
 # and the "float" register map (inverter models 111-113).
 
+#
+# Commands (spec 11.7). The operating instructions give a numbered procedure for
+# each of the SunSpec model 123 control modes: write the value register, set the
+# timing registers if you want them, then write 1 to the mode's _Ena register.
+# A value written on its own does nothing, and changing a value while a mode is
+# already running needs the _Ena register set to 1 again. That is a sequence, not
+# a setpoint, so the six set/stop commands cover power limiting, constant power
+# factor and constant reactive power, with connect/disconnect for standby.
+#
+# CommandParam carries no transform, and in particular no scale_ref, so the
+# params that target a scaled register take the raw register value: apply
+# WMaxLimPct_SF, OutPFSet_SF or VArPct_SF yourself. The equivalent writable
+# points are scaled normally. The document also notes that writing all five
+# registers of a mode in one FC16 request is faster than issuing them
+# separately; a client is free to collapse the write steps that way.
+
 doc_id: fronius.gen24
 name: Fronius Symo/Primo GEN24 Plus (SunSpec int+SF)
-version: 2.0.0
+version: 2.1.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
@@ -2601,4 +2617,212 @@ devices:
               constraints:
                 allowed_values: [0, 1]
 
+    commands:
+      - command_id: set_power_limit
+        name: "Start Active Power Limiting"
+        description: "Limit the inverter's active output power to a percentage of nominal and start the mode, following the numbered procedure in the operating instructions: write WMaxLimPct, optionally set the timing registers, then write 1 to WMaxLim_Ena. Re-running this command while the mode is already active is how you change the limit; the document says a new value only takes effect once WMaxLim_Ena is set to 1 again. limit_pct_raw is the raw register value, so apply WMaxLimPct_SF yourself (e.g. 3000 for 30 % at SF -2). Set win_tms and rvrt_tms to 0 for a change that applies immediately and stays until you stop it. The document marks them optional (step 2 of its procedure) but a command's steps are linear, so both are required here; 0 is the documented default."
+        params:
+          - field: limit_pct_raw
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 5 }
+            required: true
+          - field: win_tms
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 6 }
+            required: true
+          - field: rvrt_tms
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 7 }
+            required: true
+        steps:
+          - name: write_value
+            write: { param: limit_pct_raw }
+          - name: write_win_tms
+            write: { param: win_tms }
+          - name: write_rvrt_tms
+            write: { param: rvrt_tms }
+          - name: start_mode
+            write: { trigger: { point_id: wmax_lim_ena, value: 1 } }
+          - name: read_back
+            read: { point_id: wmax_lim_pct, into: applied }
+        results:
+          - field: applied
+            from: applied
+            value_type: { primitive: DECIMAL }
+          - field: enabled
+            from: wmax_lim_ena
+            value_type: { primitive: UINT32 }
 
+      - command_id: stop_power_limit
+        name: "Stop Active Power Limiting"
+        description: "End active power limiting by writing 0 to WMaxLim_Ena. The inverter falls back to the next priority, e.g. dynamic power reduction."
+        steps:
+          - name: stop_mode
+            write: { trigger: { point_id: wmax_lim_ena, value: 0 } }
+          - name: read_back
+            read: { point_id: wmax_lim_ena, into: enabled }
+        results:
+          - field: enabled
+            from: enabled
+            value_type: { primitive: UINT32 }
+
+      - command_id: set_power_factor
+        name: "Start Constant Power Factor"
+        description: "Hold a constant output power factor and start the mode: write OutPFSet, optionally set the timing registers, then write 1 to OutPFSet_Ena. power_factor_raw is the raw register value, so apply OutPFSet_SF yourself. Set win_tms and rvrt_tms to 0 for a change that applies immediately and stays until you stop it. The document marks them optional (step 2 of its procedure) but a command's steps are linear, so both are required here; 0 is the documented default."
+        params:
+          - field: power_factor_raw
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 10 }
+            required: true
+          - field: win_tms
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 11 }
+            required: true
+          - field: rvrt_tms
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 12 }
+            required: true
+        steps:
+          - name: write_value
+            write: { param: power_factor_raw }
+          - name: write_win_tms
+            write: { param: win_tms }
+          - name: write_rvrt_tms
+            write: { param: rvrt_tms }
+          - name: start_mode
+            write: { trigger: { point_id: out_pf_set_ena, value: 1 } }
+          - name: read_back
+            read: { point_id: out_pf_set, into: applied }
+        results:
+          - field: applied
+            from: applied
+            value_type: { primitive: DECIMAL }
+          - field: enabled
+            from: out_pf_set_ena
+            value_type: { primitive: UINT32 }
+
+      - command_id: stop_power_factor
+        name: "Stop Constant Power Factor"
+        description: "End constant power factor mode by writing 0 to OutPFSet_Ena."
+        steps:
+          - name: stop_mode
+            write: { trigger: { point_id: out_pf_set_ena, value: 0 } }
+          - name: read_back
+            read: { point_id: out_pf_set_ena, into: enabled }
+        results:
+          - field: enabled
+            from: enabled
+            value_type: { primitive: UINT32 }
+
+      - command_id: set_reactive_power_limit
+        name: "Start Constant Reactive Power"
+        description: "Hold a constant reactive power as a percentage and start the mode: write VArMaxPct, optionally set the timing registers, then write 1 to VArPct_Ena. var_pct_raw is the raw register value, so apply VArPct_SF yourself. Reactive power output is bounded by the inverter's maximum apparent power and its operating reactive-power limit, so the active power may be curtailed to make room. Set win_tms and rvrt_tms to 0 for a change that applies immediately and stays until you stop it. The document marks them optional (step 2 of its procedure) but a command's steps are linear, so both are required here; 0 is the documented default."
+        params:
+          - field: var_pct_raw
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 16 }
+            required: true
+          - field: win_tms
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 18 }
+            required: true
+          - field: rvrt_tms
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 19 }
+            required: true
+        steps:
+          - name: write_value
+            write: { param: var_pct_raw }
+          - name: write_win_tms
+            write: { param: win_tms }
+          - name: write_rvrt_tms
+            write: { param: rvrt_tms }
+          - name: start_mode
+            write: { trigger: { point_id: var_pct_ena, value: 1 } }
+          - name: read_back
+            read: { point_id: var_max_pct, into: applied }
+        results:
+          - field: applied
+            from: applied
+            value_type: { primitive: DECIMAL }
+          - field: enabled
+            from: var_pct_ena
+            value_type: { primitive: UINT32 }
+
+      - command_id: stop_reactive_power_limit
+        name: "Stop Constant Reactive Power"
+        description: "End constant reactive power mode by writing 0 to VArPct_Ena."
+        steps:
+          - name: stop_mode
+            write: { trigger: { point_id: var_pct_ena, value: 0 } }
+          - name: read_back
+            read: { point_id: var_pct_ena, into: enabled }
+        results:
+          - field: enabled
+            from: enabled
+            value_type: { primitive: UINT32 }
+
+      - command_id: connect
+        name: "Connect (Resume Feed-In)"
+        description: "Bring the inverter out of standby into feeding operation. Sets the connect timing registers, then writes 1 to Conn. Set win_tms and rvrt_tms to 0 for a change that applies immediately and stays until you stop it. The document marks them optional (step 2 of its procedure) but a command's steps are linear, so both are required here; 0 is the documented default."
+        params:
+          - field: win_tms
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 2 }
+            required: true
+          - field: rvrt_tms
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 3 }
+            required: true
+        steps:
+          - name: write_win_tms
+            write: { param: win_tms }
+          - name: write_rvrt_tms
+            write: { param: rvrt_tms }
+          - name: connect
+            write: { trigger: { point_id: conn, value: 1 } }
+          - name: read_back
+            read: { point_id: conn, into: connected }
+        results:
+          - field: connected
+            from: connected
+            value_type: { primitive: UINT32 }
+
+      - command_id: disconnect
+        name: "Disconnect (Standby)"
+        description: "Put the inverter into standby so it stops feeding in. Sets the connect timing registers, then writes 0 to Conn. Set rvrt_tms to a non-zero number of seconds if you want the inverter to resume feeding in on its own; 0 means it stays in standby until you connect it again. Set win_tms and rvrt_tms to 0 for a change that applies immediately and stays until you stop it. The document marks them optional (step 2 of its procedure) but a command's steps are linear, so both are required here; 0 is the documented default."
+        params:
+          - field: win_tms
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 2 }
+            required: true
+          - field: rvrt_tms
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, model_relative_offset: 3 }
+            required: true
+        steps:
+          - name: write_win_tms
+            write: { param: win_tms }
+          - name: write_rvrt_tms
+            write: { param: rvrt_tms }
+          - name: disconnect
+            write: { trigger: { point_id: conn, value: 0 } }
+          - name: read_back
+            read: { point_id: conn, into: connected }
+        results:
+          - field: connected
+            from: connected
+            value_type: { primitive: UINT32 }

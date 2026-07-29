@@ -67,7 +67,7 @@ shakes out bugs in the stdlib and the codec before the registry grows.
 | Measurand qualifiers (phase/direction/aggregation/location/accumulation) | across the set |
 | Modbus TCP + `default_unit_id` + overlay block | Victron Venus OS |
 | Composed mantissa/exponent (§14) incl. embedded decade exponent (§14.2) | Iskra WM3M4 |
-| Multi-step command procedures (§11.7): params, trigger writes, poll conditions | Bauer BSM, Iskra WM3M4, Growatt SPH |
+| Multi-step command procedures (§11.7): params, trigger writes, poll conditions | Bauer BSM, Iskra WM3M4, Growatt SPH, Fronius GEN24, Sigenergy SigenStor, ABB Terra AC, Eastron SDM630, Webasto Next |
 | Dynamic read length (`length_ref`, §11.7.1) | Iskra WM3M4 |
 | `COIL` space (read-only alarm bits, FC01) | Phoenix Contact EEM-EM3xx |
 | Typed register sub-fields (`fields`, §13.1) over a composite write word | Phoenix Contact EEM-EM3xx |

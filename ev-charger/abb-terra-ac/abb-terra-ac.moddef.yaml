@@ -18,9 +18,22 @@
 # Scaling: the doc gives a per-register "Resolution" column. A resolution of 0.001 A on a
 # raw integer means engineering value = raw * 0.001, i.e. transform scale 1/1000.
 
+#
+# Commands (spec 11.7). Section 5.20 documents the Modbus firmware upgrade as
+# two ordered register groups: a request describing the image, then one transfer
+# per package. Both are modelled as commands. Register 4118h, the package
+# payload, has no point in the firmware_upgrade block because the document gives
+# the region no size; it appears only as the data param of
+# firmware_send_package, whose 123-word length is the FC16 write ceiling rather
+# than a documented device limit.
+#
+# Start/stop charging (4105h) and lock/unlock socket (4103h) stay single COMMAND
+# points. Each is one write with no inputs and no documented ordering against
+# the current-limit register.
+
 doc_id: abb.terra-ac
 name: ABB Terra AC Wallbox
-version: 1.1.0
+version: 1.2.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
@@ -650,3 +663,89 @@ devices:
               word_order: WORD_BIG_ENDIAN
             write:
               behavior: DIRECT
+
+    commands:
+      # Section 5.20 of the ABB document splits the Modbus firmware upgrade into
+      # a request that describes the image and a transfer that ships it one
+      # package at a time. Every register involved is write-only, so neither
+      # command can read anything back and both draw MDW501. The document says
+      # so itself: "the only way to check if it is upgrade successfully is check
+      # FW version with register(4004h)", which is the read-only firmware_version
+      # point. After the last package the charger verifies the signature embedded
+      # in the image and reboots itself.
+      - command_id: firmware_update_request
+        name: "Firmware Update Request"
+        description: "Announce a firmware image before sending it (document section 5.20.1). Writes the version info, the total package length, the CRC of the whole package as supplied by ABB, and the per-package size, then arms the transfer by writing the document's fixed value 3 to Update Mode. Follow it with one firmware_send_package call per package."
+        params:
+          - field: version_info
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16650, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x410A
+            required: true
+          - field: package_length
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16652, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x410C
+            required: true
+          - field: package_crc
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16654, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x410E
+            required: true
+          - field: chunk_size
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16656, length_words: 1 } # 0x4110
+            required: true
+        steps:
+          - name: write_version_info
+            write: { param: version_info }
+          - name: write_package_length
+            write: { param: package_length }
+          - name: write_package_crc
+            write: { param: package_crc }
+          - name: write_chunk_size
+            write: { param: chunk_size }
+          - name: arm_update_mode
+            write: { trigger: { point_id: fw_update_mode, value: 3 } }
+
+      - command_id: firmware_send_package
+        name: "Send Firmware Package"
+        description: "Ship one package of the firmware image (document section 5.20.2). Writes the total number of split packages, this package's sequence number counting from 1, how many bytes it actually carries (the last one is usually short), the checksum over the payload alone, and then the payload itself at 0x4118. Call it once per package in sequence order. The document gives the payload region no size, so the 123-word length on the data param is the Modbus write ceiling for FC16, not a documented device limit; send exactly the number of bytes named in byte_count, which must not exceed the chunk_size agreed in firmware_update_request."
+        params:
+          - field: total_packages
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16659, length_words: 1 } # 0x4113
+            required: true
+          - field: sequence_number
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16660, length_words: 1 } # 0x4114
+            required: true
+          - field: byte_count
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16661, length_words: 1 } # 0x4115
+            required: true
+          - field: data_checksum
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16662, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x4116
+            required: true
+          - field: data
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: HOLDING_REGISTER, offset: 16664, length_words: 123, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN } # 0x4118
+            required: true
+        steps:
+          - name: write_total_packages
+            write: { param: total_packages }
+          - name: write_sequence_number
+            write: { param: sequence_number }
+          - name: write_byte_count
+            write: { param: byte_count }
+          - name: write_data_checksum
+            write: { param: data_checksum }
+          - name: write_data
+            write: { param: data }

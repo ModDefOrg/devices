@@ -30,9 +30,23 @@
 #     battery, AC measurements, PV strings, DC charger), and
 #     5.4 hybrid-inverter parameter setting.
 
+#
+# Commands (spec 11.7). Plant control is a handshake, not a setpoint. Remote EMS
+# enable (40029) has to be set before anything in the plant_control block does
+# anything, and the document confirms the switch through the read-only EMS work
+# mode (30003) turning to 7. Which setpoint register the plant then honours
+# depends on the remote EMS control mode (40031): mode 0 for the absolute power
+# targets, modes 3 and 4 for the ESS charging limit, modes 5 and 6 for the
+# discharging limit. The six commands wrap that ordering, with enable_remote_ems
+# polling 30003 rather than assuming the switch took.
+#
+# CommandParam carries no transform, so params that target a register with a
+# documented gain take the raw value. The equivalent writable points are scaled
+# normally.
+
 doc_id: sigenergy.sigenstor
 name: Sigenergy SigenStor / Sigen Hybrid Energy Storage System
-version: 1.0.0
+version: 1.1.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
@@ -1656,3 +1670,143 @@ devices:
               behavior: DIRECT
               constraints:
                 allowed_values: [0, 1]
+
+    commands:
+      - command_id: enable_remote_ems
+        name: "Enable Remote EMS Control"
+        description: "Hand plant control over to the Modbus master. Writes 1 to Remote EMS enable (40029) and then waits for the plant's EMS work mode (30003) to report 7, Remote EMS mode, which is how the document says the switch is confirmed. Nothing else in this profile's plant_control block does anything until this succeeds."
+        steps:
+          - name: enable
+            write: { trigger: { point_id: remote_ems_enable, value: 1 } }
+          - name: wait_for_remote_mode
+            poll:
+              point_id: ems_work_mode
+              until: { op: EQ, value: 7 }
+              interval_ms: 500
+              timeout_ms: 15000
+        results:
+          - field: ems_work_mode
+            from: ems_work_mode
+            value_type: { primitive: UINT32 }
+
+      - command_id: disable_remote_ems
+        name: "Disable Remote EMS Control"
+        description: "Give plant control back to the built-in EMS by writing 0 to Remote EMS enable (40029). The plant returns to whichever work mode it was configured for locally, so the resulting EMS work mode is read back rather than polled for a fixed value."
+        steps:
+          - name: disable
+            write: { trigger: { point_id: remote_ems_enable, value: 0 } }
+        results:
+          - field: ems_work_mode
+            from: ems_work_mode
+            value_type: { primitive: UINT32 }
+
+      - command_id: set_pcs_power_target
+        name: "Set PCS Active and Reactive Power Target"
+        description: "Take remote control and hold an absolute active and reactive power target at the plant. Enables remote EMS, selects control mode 0 (PCS remote control), then writes both targets. Mode 0 is required: the document notes that the power control registers not called out individually take effect only when the remote EMS control mode is 0. Command params carry no transform, so the limit is the raw register value in units of 1/1000 kW (the document's gain), not kW."
+        params:
+          - field: active_power_raw
+            storage_type: S32
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            required: true
+          - field: reactive_power_raw
+            storage_type: S32
+            value_type: { primitive: INT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 3, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            required: true
+        steps:
+          - name: enable_remote
+            write: { trigger: { point_id: remote_ems_enable, value: 1 } }
+          - name: select_pcs_mode
+            write: { trigger: { point_id: remote_ems_control_mode, value: 0 } }
+          - name: write_active
+            write: { param: active_power_raw }
+          - name: write_reactive
+            write: { param: reactive_power_raw }
+        results:
+          - field: active_power_target
+            from: active_power_target
+            value_type: { primitive: DECIMAL }
+          - field: reactive_power_target
+            from: reactive_power_target
+            value_type: { primitive: DECIMAL }
+
+      - command_id: command_charge
+        name: "Command Charging"
+        description: "Take remote control and charge the battery at up to a given power. Enables remote EMS, writes the control mode, then writes the ESS max charging limit (40032), which the document says takes effect only in modes 3 and 4. Pass mode 3 to consume grid power first or 4 to consume PV power first. Command params carry no transform, so the limit is the raw register value in units of 1/1000 kW (the document's gain), not kW."
+        params:
+          - field: mode
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 31, length_words: 1 }
+            required: true
+          - field: charge_limit_raw
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 32, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            required: true
+        steps:
+          - name: enable_remote
+            write: { trigger: { point_id: remote_ems_enable, value: 1 } }
+          - name: select_mode
+            write: { param: mode }
+          - name: write_limit
+            write: { param: charge_limit_raw }
+        results:
+          - field: control_mode
+            from: remote_ems_control_mode
+            value_type: { primitive: UINT32 }
+          - field: charge_limit
+            from: ess_max_charge_limit
+            value_type: { primitive: DECIMAL }
+
+      - command_id: command_discharge
+        name: "Command Discharging"
+        description: "Take remote control and discharge at up to a given power. Enables remote EMS, writes the control mode, then writes the ESS max discharging limit (40034), which the document says takes effect only in modes 5 and 6. Pass mode 5 to output from PV first or 6 to output from the battery first. Command params carry no transform, so the limit is the raw register value in units of 1/1000 kW (the document's gain), not kW."
+        params:
+          - field: mode
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 31, length_words: 1 }
+            required: true
+          - field: discharge_limit_raw
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 34, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            required: true
+        steps:
+          - name: enable_remote
+            write: { trigger: { point_id: remote_ems_enable, value: 1 } }
+          - name: select_mode
+            write: { param: mode }
+          - name: write_limit
+            write: { param: discharge_limit_raw }
+        results:
+          - field: control_mode
+            from: remote_ems_control_mode
+            value_type: { primitive: UINT32 }
+          - field: discharge_limit
+            from: ess_max_discharge_limit
+            value_type: { primitive: DECIMAL }
+
+      - command_id: set_remote_ems_mode
+        name: "Set Remote EMS Control Mode"
+        description: "Enable remote EMS and put the plant into one of the modes from the document's appendix 6 without touching any power limit. Useful for the modes that need no setpoint: 1 is standby and 2 is maximum self-consumption. The charge and discharge modes 3 to 6 are better driven through command_charge and command_discharge, which also write the limit those modes read."
+        params:
+          - field: mode
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 31, length_words: 1 }
+            required: true
+        steps:
+          - name: enable_remote
+            write: { trigger: { point_id: remote_ems_enable, value: 1 } }
+          - name: select_mode
+            write: { param: mode }
+        results:
+          - field: control_mode
+            from: remote_ems_control_mode
+            value_type: { primitive: UINT32 }
+          - field: ems_work_mode
+            from: ems_work_mode
+            value_type: { primitive: UINT32 }

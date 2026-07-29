@@ -21,9 +21,16 @@
 #     holding-register settings, the demand reset command and the serial
 #     number register.
 
+#
+# Commands (spec 11.7). System Type (40011) is the only register the document
+# marks "r/wp". Writing it means entering the password at 40025 first, and the
+# document asks that the lock be reapplied afterwards, so set_system_type does
+# all three writes as one procedure. The password times out after a minute
+# unless the Password or Password Lock register is read.
+
 doc_id: eastron.sdm630
 name: Eastron SDM630 Three-Phase Energy Meter
-version: 2.0.0
+version: 2.1.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
@@ -1534,8 +1541,8 @@ devices:
 
           - point_id: password_lock
             name: Password Lock
-            description: Read password lock status - 0 locked, 1 unlocked; reading resets the password timeout; writing any value re-locks (40015)
-            access: READ_ONLY
+            description: Read password lock status - 0 locked, 1 unlocked; reading resets the password timeout back to one minute; writing any value re-locks (40015). The protocol document's access column says "r" but its own description of the register documents the write, so this is modelled READ_WRITE.
+            access: READ_WRITE
             storage_type: IEEE754_F32
             value_type: { primitive: FLOAT32 }
             mapping:
@@ -1544,6 +1551,10 @@ devices:
               length_words: 2
               byte_order: BIG_ENDIAN
               word_order: WORD_BIG_ENDIAN
+            write:
+              behavior: DIRECT
+              constraints:
+                safety_note: "Any value re-locks the password-protected registers; there is no way to unlock again except by writing the password to 40025"
 
           - point_id: network_parity_stop
             name: Network Parity/Stop
@@ -1688,3 +1699,39 @@ devices:
               length_words: 2
               byte_order: BIG_ENDIAN
               word_order: WORD_BIG_ENDIAN
+
+    commands:
+      # System Type (40011) is the one register the protocol document marks
+      # "r/wp": it cannot be written until the password has been entered at
+      # 40025. The password times out after a minute unless the Password or
+      # Password Lock register is read, and the document asks that the lock be
+      # reapplied once the change is made, so unlock, write and re-lock belong
+      # together as one procedure.
+      - command_id: set_system_type
+        name: "Set Wiring System Type"
+        description: "Change the meter's wiring system type behind the password gate. Enters the password at 40015's companion register 40025, writes the new system type (1 = 1p2w, 2 = 3p3w, 3 = 3p4w), then re-locks by writing to the Password Lock register, which is the document's option (b) for reapplying the lock. The default password is 0000. Both params are IEEE-754 floats like every other register on this meter."
+        params:
+          - field: password
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 24, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            required: true
+          - field: system_type
+            storage_type: IEEE754_F32
+            value_type: { primitive: FLOAT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 10, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_BIG_ENDIAN }
+            required: true
+        steps:
+          - name: enter_password
+            write: { param: password }
+          - name: write_system_type
+            write: { param: system_type }
+          - name: relock
+            write: { trigger: { point_id: password_lock, value: 0 } }
+        results:
+          - field: system_type
+            from: system_type
+            value_type: { primitive: FLOAT32 }
+          - field: lock_status
+            from: password_lock
+            value_type: { primitive: FLOAT32 }
