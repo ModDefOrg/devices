@@ -53,7 +53,10 @@ devices:
   - MODBUS_TCP
   points: 396
   status: vendor-confirmed
-  source: Growatt Inverter Modbus RTU Protocol II V1.39 (SPH/hybrid section)
+  source: 'Growatt Inverter Modbus RTU Protocol II V1.39 (SPH/hybrid section). Includes the ten
+    §11.7 commands the document implies without spelling them out — four set-and-latch procedures
+    for the power setpoints that holding register 2 makes volatile, and six that program a
+    grid-first or battery-first time window as one ordered action'
   source_url: https://www.growatt.com/ (Modbus RTU Protocol II)
   measurands:
   - inverter_status

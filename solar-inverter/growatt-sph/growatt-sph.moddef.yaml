@@ -22,10 +22,52 @@
 #
 # Time-slot registers pack hour into the high byte and minute into the low byte
 # of one 16-bit register; these are modeled with v0.4 register fields.
+#
+# Bus pacing (doc 5.3.1): the inverter needs at least 850 ms between one Modbus
+# command and the next, and the document suggests 1 s. That applies to every
+# request, including the individual writes inside the commands below. A client
+# that fires the steps back to back will lose some of them.
+#
+# Commands (spec 11.7). The document describes two procedures that a single
+# writable point cannot express, so both are modelled as commands:
+#
+#   - Persisting a power setpoint. Holding registers 3, 4, 5 and 99 are
+#     volatile: register 02 says its own value decides whether "these settings
+#     will be acting or not when next power on", and it defaults to 0. Setting
+#     one of those four for real is therefore two writes, the value and then
+#     the latch. set_active_power_rate, set_reactive_power_rate,
+#     set_power_factor and set_pf_lock_in_voltage each do that pair and read
+#     the value back. Register 2 is one flag covering all four setpoints, so
+#     latching one latches whatever the other three currently hold. A caller
+#     changing several at once can instead write the points directly and set
+#     settings_memory_state once at the end.
+#   - Programming a charge or discharge window. Each grid-first and
+#     battery-first slot is three registers, start time, stop time and enable,
+#     and the six set_grid_first_slotN / set_bat_first_slotN commands write all
+#     three as one action. The enable flag goes last so a half-written window
+#     is never live. The document does not mandate that order; it is this
+#     profile's choice.
+#
+# CommandParam carries no transform, so params that target a scaled register
+# take the raw register value. That affects set_power_factor (raw is the power
+# factor times 10000) and set_pf_lock_in_voltage (raw is in 0.1 V), and each
+# command's description says so. The equivalent writable points are scaled
+# normally.
+#
+# Registers 31 (FlashStart), 32 (Reset User Info), 33 (Reset to factory) and
+# 1047 (aging test) stay single COMMAND points rather than commands: each is
+# one write with no inputs, no ordering and nothing to read back.
+#
+# Register 1001 is a second latch of the same kind as register 2, but the
+# document describes what it covers only as "the following 19-22 CMD", with the
+# note "(02 repeat)". Whether that means holding 19-22 or the storage registers
+# 1019-1022 is not clear from the text, so no set-and-latch command is offered
+# for it. The register is exposed as the writable point
+# storage_settings_memory_state.
 
 doc_id: growatt.sph
 name: Growatt SPH Hybrid Storage Inverter
-version: 2.0.0
+version: 2.1.0
 
 imports:
   - uri: moddef:stdlib:measurands:1.0.0
@@ -5351,3 +5393,334 @@ devices:
             storage_type: U16
             value_type: { primitive: UINT32 }
             mapping: { space: INPUT_REGISTER, offset: 1248, length_words: 1 }
+
+    commands:
+      - command_id: set_active_power_rate
+        name: "Set Active Power Rate (Persistent)"
+        description: "Set the inverter's maximum active output power as a percentage, then make it survive a power cycle. 255 means no limit. The setpoint registers 3, 4, 5 and 99 are volatile until holding register 2 is set to 1, so this writes the value and then latches it (document register 02: \"these settings will be acting or not when next power on\"). Register 2 is a single flag covering all four setpoints, so latching one latches whatever the others currently hold. Leave at least 850 ms between the two writes (document section 5.3.1)."
+        params:
+          - field: rate
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 3, length_words: 1 }
+            required: true
+        steps:
+          - name: write_value
+            write: { param: rate }
+          - name: latch_persistence
+            write: { trigger: { point_id: settings_memory_state, value: 1 } }
+          - name: read_back
+            read: { point_id: active_power_rate, into: applied }
+        results:
+          - field: applied
+            from: applied
+            value_type: { primitive: DECIMAL }
+          - field: persisted
+            from: settings_memory_state
+            enum_ref: { type_id: enable_state }
+
+      - command_id: set_reactive_power_rate
+        name: "Set Reactive Power Rate (Persistent)"
+        description: "Set the inverter's maximum reactive output power as a percentage from -100 to 100, then make it survive a power cycle. 255 means no limit. The setpoint registers 3, 4, 5 and 99 are volatile until holding register 2 is set to 1, so this writes the value and then latches it (document register 02: \"these settings will be acting or not when next power on\"). Register 2 is a single flag covering all four setpoints, so latching one latches whatever the others currently hold. Leave at least 850 ms between the two writes (document section 5.3.1)."
+        params:
+          - field: rate
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 4, length_words: 1 }
+            required: true
+        steps:
+          - name: write_value
+            write: { param: rate }
+          - name: latch_persistence
+            write: { trigger: { point_id: settings_memory_state, value: 1 } }
+          - name: read_back
+            read: { point_id: reactive_power_rate, into: applied }
+        results:
+          - field: applied
+            from: applied
+            value_type: { primitive: DECIMAL }
+          - field: persisted
+            from: settings_memory_state
+            enum_ref: { type_id: enable_state }
+
+      - command_id: set_power_factor
+        name: "Set Power Factor (Persistent)"
+        description: "Set the inverter's output power factor, then make it survive a power cycle. The parameter is the raw register value, i.e. the power factor times 10000: 0 to 10000 is underexcited and 10001 to 20000 overexcited. Command params carry no transform, so unlike the power_factor_set point this value is not scaled for you. The setpoint registers 3, 4, 5 and 99 are volatile until holding register 2 is set to 1, so this writes the value and then latches it (document register 02: \"these settings will be acting or not when next power on\"). Register 2 is a single flag covering all four setpoints, so latching one latches whatever the others currently hold. Leave at least 850 ms between the two writes (document section 5.3.1)."
+        params:
+          - field: power_factor_raw
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 5, length_words: 1 }
+            required: true
+        steps:
+          - name: write_value
+            write: { param: power_factor_raw }
+          - name: latch_persistence
+            write: { trigger: { point_id: settings_memory_state, value: 1 } }
+          - name: read_back
+            read: { point_id: power_factor_set, into: applied }
+        results:
+          - field: applied
+            from: applied
+            value_type: { primitive: UINT32 }
+          - field: persisted
+            from: settings_memory_state
+            enum_ref: { type_id: enable_state }
+
+      - command_id: set_pf_lock_in_voltage
+        name: "Set CEI 0-21 PF Lock-In Voltage (Persistent)"
+        description: "Set the CEI 0-21 power-factor curve lock-in grid voltage, then make it survive a power cycle. The parameter is the raw register value in units of 0.1 V, since command params carry no transform. The setpoint registers 3, 4, 5 and 99 are volatile until holding register 2 is set to 1, so this writes the value and then latches it (document register 02: \"these settings will be acting or not when next power on\"). Register 2 is a single flag covering all four setpoints, so latching one latches whatever the others currently hold. Leave at least 850 ms between the two writes (document section 5.3.1)."
+        params:
+          - field: voltage_raw
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 99, length_words: 1 }
+            required: true
+        steps:
+          - name: write_value
+            write: { param: voltage_raw }
+          - name: latch_persistence
+            write: { trigger: { point_id: settings_memory_state, value: 1 } }
+          - name: read_back
+            read: { point_id: pf_lock_in_grid_voltage, into: applied }
+        results:
+          - field: applied
+            from: applied
+            value_type: { primitive: UINT32 }
+          - field: persisted
+            from: settings_memory_state
+            enum_ref: { type_id: enable_state }
+
+      - command_id: set_grid_first_slot1
+        name: "Program Grid First Time Slot 1"
+        description: "Write the start time, stop time and enable flag of grid first time slot 1 (discharging the battery to the load and grid) as one action. Start and stop times pack the hour in the high byte and the minute in the low byte. The enable flag is written last so a half-written window is never live; the protocol document does not mandate an order, that is this profile's choice. Leave at least 850 ms between the three writes (document section 5.3.1)."
+        params:
+          - field: start_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1080, length_words: 1 }
+            required: true
+          - field: stop_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1081, length_words: 1 }
+            required: true
+          - field: enable
+            storage_type: U16
+            value_type: { enum_ref: { type_id: enable_state } }
+            mapping: { space: HOLDING_REGISTER, offset: 1082, length_words: 1 }
+            required: true
+        steps:
+          - name: write_start
+            write: { param: start_time }
+          - name: write_stop
+            write: { param: stop_time }
+          - name: write_enable
+            write: { param: enable }
+          - name: read_back_enable
+            read: { point_id: grid_first_slot1_enable, into: enabled }
+        results:
+          - field: start_time
+            from: grid_first_slot1_start
+            value_type: { primitive: UINT32 }
+          - field: stop_time
+            from: grid_first_slot1_stop
+            value_type: { primitive: UINT32 }
+          - field: enabled
+            from: enabled
+            enum_ref: { type_id: enable_state }
+
+      - command_id: set_grid_first_slot2
+        name: "Program Grid First Time Slot 2"
+        description: "Write the start time, stop time and enable flag of grid first time slot 2 (discharging the battery to the load and grid) as one action. Start and stop times pack the hour in the high byte and the minute in the low byte. The enable flag is written last so a half-written window is never live; the protocol document does not mandate an order, that is this profile's choice. Leave at least 850 ms between the three writes (document section 5.3.1)."
+        params:
+          - field: start_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1083, length_words: 1 }
+            required: true
+          - field: stop_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1084, length_words: 1 }
+            required: true
+          - field: enable
+            storage_type: U16
+            value_type: { enum_ref: { type_id: enable_state } }
+            mapping: { space: HOLDING_REGISTER, offset: 1085, length_words: 1 }
+            required: true
+        steps:
+          - name: write_start
+            write: { param: start_time }
+          - name: write_stop
+            write: { param: stop_time }
+          - name: write_enable
+            write: { param: enable }
+          - name: read_back_enable
+            read: { point_id: grid_first_slot2_enable, into: enabled }
+        results:
+          - field: start_time
+            from: grid_first_slot2_start
+            value_type: { primitive: UINT32 }
+          - field: stop_time
+            from: grid_first_slot2_stop
+            value_type: { primitive: UINT32 }
+          - field: enabled
+            from: enabled
+            enum_ref: { type_id: enable_state }
+
+      - command_id: set_grid_first_slot3
+        name: "Program Grid First Time Slot 3"
+        description: "Write the start time, stop time and enable flag of grid first time slot 3 (discharging the battery to the load and grid) as one action. Start and stop times pack the hour in the high byte and the minute in the low byte. The enable flag is written last so a half-written window is never live; the protocol document does not mandate an order, that is this profile's choice. Leave at least 850 ms between the three writes (document section 5.3.1)."
+        params:
+          - field: start_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1086, length_words: 1 }
+            required: true
+          - field: stop_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1087, length_words: 1 }
+            required: true
+          - field: enable
+            storage_type: U16
+            value_type: { enum_ref: { type_id: enable_state } }
+            mapping: { space: HOLDING_REGISTER, offset: 1088, length_words: 1 }
+            required: true
+        steps:
+          - name: write_start
+            write: { param: start_time }
+          - name: write_stop
+            write: { param: stop_time }
+          - name: write_enable
+            write: { param: enable }
+          - name: read_back_enable
+            read: { point_id: grid_first_slot3_enable, into: enabled }
+        results:
+          - field: start_time
+            from: grid_first_slot3_start
+            value_type: { primitive: UINT32 }
+          - field: stop_time
+            from: grid_first_slot3_stop
+            value_type: { primitive: UINT32 }
+          - field: enabled
+            from: enabled
+            enum_ref: { type_id: enable_state }
+
+      - command_id: set_bat_first_slot1
+        name: "Program Battery First Time Slot 1"
+        description: "Write the start time, stop time and enable flag of battery first time slot 1 (charging the battery) as one action. Start and stop times pack the hour in the high byte and the minute in the low byte. The enable flag is written last so a half-written window is never live; the protocol document does not mandate an order, that is this profile's choice. Leave at least 850 ms between the three writes (document section 5.3.1)."
+        params:
+          - field: start_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1100, length_words: 1 }
+            required: true
+          - field: stop_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1101, length_words: 1 }
+            required: true
+          - field: enable
+            storage_type: U16
+            value_type: { enum_ref: { type_id: enable_state } }
+            mapping: { space: HOLDING_REGISTER, offset: 1102, length_words: 1 }
+            required: true
+        steps:
+          - name: write_start
+            write: { param: start_time }
+          - name: write_stop
+            write: { param: stop_time }
+          - name: write_enable
+            write: { param: enable }
+          - name: read_back_enable
+            read: { point_id: bat_first_slot1_enable, into: enabled }
+        results:
+          - field: start_time
+            from: bat_first_slot1_start
+            value_type: { primitive: UINT32 }
+          - field: stop_time
+            from: bat_first_slot1_stop
+            value_type: { primitive: UINT32 }
+          - field: enabled
+            from: enabled
+            enum_ref: { type_id: enable_state }
+
+      - command_id: set_bat_first_slot2
+        name: "Program Battery First Time Slot 2"
+        description: "Write the start time, stop time and enable flag of battery first time slot 2 (charging the battery) as one action. Start and stop times pack the hour in the high byte and the minute in the low byte. The enable flag is written last so a half-written window is never live; the protocol document does not mandate an order, that is this profile's choice. Leave at least 850 ms between the three writes (document section 5.3.1)."
+        params:
+          - field: start_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1103, length_words: 1 }
+            required: true
+          - field: stop_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1104, length_words: 1 }
+            required: true
+          - field: enable
+            storage_type: U16
+            value_type: { enum_ref: { type_id: enable_state } }
+            mapping: { space: HOLDING_REGISTER, offset: 1105, length_words: 1 }
+            required: true
+        steps:
+          - name: write_start
+            write: { param: start_time }
+          - name: write_stop
+            write: { param: stop_time }
+          - name: write_enable
+            write: { param: enable }
+          - name: read_back_enable
+            read: { point_id: bat_first_slot2_enable, into: enabled }
+        results:
+          - field: start_time
+            from: bat_first_slot2_start
+            value_type: { primitive: UINT32 }
+          - field: stop_time
+            from: bat_first_slot2_stop
+            value_type: { primitive: UINT32 }
+          - field: enabled
+            from: enabled
+            enum_ref: { type_id: enable_state }
+
+      - command_id: set_bat_first_slot3
+        name: "Program Battery First Time Slot 3"
+        description: "Write the start time, stop time and enable flag of battery first time slot 3 (charging the battery) as one action. Start and stop times pack the hour in the high byte and the minute in the low byte. The enable flag is written last so a half-written window is never live; the protocol document does not mandate an order, that is this profile's choice. Leave at least 850 ms between the three writes (document section 5.3.1)."
+        params:
+          - field: start_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1106, length_words: 1 }
+            required: true
+          - field: stop_time
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 1107, length_words: 1 }
+            required: true
+          - field: enable
+            storage_type: U16
+            value_type: { enum_ref: { type_id: enable_state } }
+            mapping: { space: HOLDING_REGISTER, offset: 1108, length_words: 1 }
+            required: true
+        steps:
+          - name: write_start
+            write: { param: start_time }
+          - name: write_stop
+            write: { param: stop_time }
+          - name: write_enable
+            write: { param: enable }
+          - name: read_back_enable
+            read: { point_id: bat_first_slot3_enable, into: enabled }
+        results:
+          - field: start_time
+            from: bat_first_slot3_start
+            value_type: { primitive: UINT32 }
+          - field: stop_time
+            from: bat_first_slot3_stop
+            value_type: { primitive: UINT32 }
+          - field: enabled
+            from: enabled
+            enum_ref: { type_id: enable_state }
