@@ -1,0 +1,920 @@
+# Source: TECH Sterowniki, "ST-340 V2 DRO" user manual, document revision 1.0.8,
+# dated Wieprz 16.10.2024, section 7 "Modbus" (pages 23-26).
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# Manufacturer: TECH STEROWNIKI II Sp. z o.o., Biała Droga 31, 34-122 Wieprz,
+# Poland. The manual is Polish-only; every name and description here is a
+# translation, with the Polish register name kept in brackets so the table can
+# be checked against the original.
+#
+# The ST-340 V2 DRO is not a heat pump. It is the controller for a rekuperator,
+# a heat-recovery ventilation unit: it drives the supply and extract fans from
+# differential pressure sensors, runs a summer bypass mode, protects the
+# exchanger from freezing, and holds a weekly schedule. Filed under `hvac`
+# because that is the closest category in this registry.
+#
+# The register table is three raster screenshots in the PDF, not text, so it
+# was transcribed by reading the images. Anyone re-checking this profile has to
+# do the same; pdftotext returns nothing for pages 24 to 26.
+#
+# Encoding notes (from section 7 "Modbus"):
+#   - The controller is a Modbus RTU slave on its built-in RS-485 port, labelled
+#     MODBUS 2 on the case. Documented function codes are 0x03 (read 16-bit
+#     registers), 0x06 (write one) and 0x10 (write a group), so the whole map is
+#     HOLDING_REGISTER space.
+#   - Addresses are the plain numbers 100 to 169 from the "Adres rejestru"
+#     column, with no 4xxxx Modicon offset anywhere in the document. Register
+#     134's comment refers to register 135 as "HR135", which confirms these are
+#     holding-register addresses used as-is, so the ModDef offset equals the
+#     documented number.
+#   - Temperatures are signed 16-bit in units of 0.1 degC. The manual explains
+#     the negative case the long way round ("65536 - x, then divide by 10"),
+#     which is two's complement: 65535 reads as -0.1 degC. Raw 63066 means
+#     sensor fault and is modelled as an na_value on every temperature point.
+#     The two summer-mode setpoints at 168 and 169 are the exception: their
+#     documented ranges (10-30 and 18-25) are whole degrees, unscaled.
+#   - Every 0/1 register is documented as "0-nieaktywne, 1-aktywne" (inactive /
+#     active) and is modelled as BOOL.
+#
+# Interpretation notes -- where the manual is unclear and this profile had to
+# decide. Each is worth confirming on hardware:
+#   - Line settings. The transmission defaults are given as 19200 b/s, even
+#     parity, 8 data bits, 1 stop bit, address 1. But register 127's own default
+#     is 3, which that register's table decodes as 38400 b/s. The two disagree;
+#     register 128's default of 1 (E-8-1) does match the stated parity, data and
+#     stop bits. Try 19200 first, since that is what the prose says.
+#   - Register 128's range is printed as 0-6 but only six values are listed,
+#     0 to 5. Modelled with the six documented values.
+#   - Register 145 (secondary heater on/off) has an empty "Typ rejestru" cell.
+#     Every other "Aktywacja / dezaktywacja" register in the table is R/W and
+#     this one has a documented default, so it is modelled READ_WRITE.
+#   - Register 140 (party function) has range 0-720 but its comment reads
+#     "Ustawienie czasu 0-180 sekund", which is the comment belonging to
+#     register 139. The range is transcribed; the unit is left unset because the
+#     two disagree. 0-720 minutes (12 hours) would be the sensible reading.
+#   - Registers 111 to 120 are the five zones of one day's weekly program, and
+#     register 110 ("Dzień", 0-6) selects which day they refer to. The manual
+#     says as much in prose: the user "sets the unit in five time intervals
+#     whose boundaries can be moved in 15-minute steps, for each day of the week
+#     separately". Reading or writing a day's program is therefore a two-part
+#     operation, which is what the two commands below are for. Register 111 is
+#     documented with the single-value range 0, i.e. zone 0 always starts at
+#     midnight.
+#   - Volumetric air flow has no unit in the spec's unit vocabulary (§10.3), so
+#     registers 100, 101 and 160 to 162 carry no `unit` and name m3/h in their
+#     descriptions instead. Same for the day and filter counters at 134, 138
+#     and 165.
+#   - The manual's "Błędy" table decodes a 16-bit error word: bit 1 extract fan
+#     speed, bit 2 supply fan speed, bit 3 intake sensor, bit 4 extract sensor,
+#     bit 5 supply sensor, bit 6 exhaust sensor, bit 7 humidifier temp sensor,
+#     bit 9 exhaust pressure sensor, bit 10 supply pressure sensor, bit 11
+#     humidifier sensor, bit 12 GWC sensor missing, bit 13 exchanger alarm,
+#     bit 14 extract fan flow, bit 15 supply fan flow (bits numbered from 1 at
+#     the least significant end; 8 and 16 are unused). No register in the table
+#     carries that word: 135 is documented as a 0-1 icon state, and the only
+#     pointer is register 134's comment "Zapis alarmów zgodnie z HR135". The
+#     bitmap is therefore not mapped here, because the document does not say
+#     which register holds it. The example given is a displayed error code, 34,
+#     decoding to bits 2 and 6.
+#   - Registers 121-125, 129-130 and 163 are marked "Zarezerwowany" (reserved)
+#     and are left out.
+
+doc_id: tech.st340v2-dro
+name: TECH ST-340 V2 DRO Heat-Recovery Ventilation Controller
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  - type_id: fan_step
+    name: Fan Speed Step
+    description: Fan speed step ("bieg"), the controller's discrete capacity levels
+    values:
+      - { value: 0, name: STEP_0, description: "Step 0, fans stopped" }
+      - { value: 1, name: STEP_1, description: Step 1 }
+      - { value: 2, name: STEP_2, description: Step 2 }
+      - { value: 3, name: STEP_3, description: Step 3 }
+
+  - type_id: weekday
+    name: Weekday
+    description: Day of the week selected for the weekly program (register 110)
+    values:
+      - { value: 0, name: SUNDAY, description: Sunday (niedziela) }
+      - { value: 1, name: MONDAY, description: Monday (poniedziałek) }
+      - { value: 2, name: TUESDAY, description: Tuesday (wtorek) }
+      - { value: 3, name: WEDNESDAY, description: Wednesday (środa) }
+      - { value: 4, name: THURSDAY, description: Thursday (czwartek) }
+      - { value: 5, name: FRIDAY, description: Friday (piątek) }
+      - { value: 6, name: SATURDAY, description: Saturday (sobota) }
+
+  - type_id: baud_rate
+    name: Baud Rate
+    description: Serial line speed code (register 127)
+    values:
+      - { value: 0, name: BPS_4800, description: 4800 bps }
+      - { value: 1, name: BPS_9600, description: 9600 bps }
+      - { value: 2, name: BPS_19200, description: "19200 bps, the speed the manual's prose gives as the default" }
+      - { value: 3, name: BPS_38400, description: "38400 bps, the register's documented default value" }
+      - { value: 4, name: BPS_57600, description: 57600 bps }
+      - { value: 5, name: BPS_115200, description: 115200 bps }
+
+  - type_id: serial_frame
+    name: Serial Frame Format
+    description: Parity, data bits and stop bits (register 128)
+    values:
+      - { value: 0, name: N_8_1, description: "No parity, 8 data bits, 1 stop bit" }
+      - { value: 1, name: E_8_1, description: "Even parity, 8 data bits, 1 stop bit (default)" }
+      - { value: 2, name: O_8_1, description: "Odd parity, 8 data bits, 1 stop bit" }
+      - { value: 3, name: N_8_2, description: "No parity, 8 data bits, 2 stop bits" }
+      - { value: 4, name: E_8_2, description: "Even parity, 8 data bits, 2 stop bits" }
+      - { value: 5, name: O_8_2, description: "Odd parity, 8 data bits, 2 stop bits" }
+
+devices:
+  - device_id: tech-st340v2-dro
+    vendor: TECH Sterowniki
+    model: ST-340 V2 DRO
+    supported_transports:
+      - MODBUS_RTU
+    blocks:
+      - block_id: parameters
+        name: "Modbus Parameter Table"
+        space: HOLDING_REGISTER
+        start_offset: 100
+        length_words: 70
+        points:
+          - point_id: supply_air_flow
+            name: "Supply Air Flow"
+            description: "Current supply air flow in m3/h, range 0-1342. A reading of 0 means the function is not available on this unit. (Wydatek Nawiewu)"
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 100 }
+
+          - point_id: extract_air_flow
+            name: "Extract Air Flow"
+            description: "Current extract air flow in m3/h, range 0-1342. A reading of 0 means the function is not available on this unit. (Wydatek Wywiewu)"
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 101 }
+
+          - point_id: supply_fan_step
+            name: "Supply Fan Step"
+            description: "Fan speed step the supply fan is currently running at (Bieg Nawiewu)."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 102 }
+
+          - point_id: extract_fan_step
+            name: "Extract Fan Step"
+            description: "Fan speed step the extract fan is currently running at (Bieg Wywiewu)."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 103 }
+
+          - point_id: temperature_intake
+            name: "Intake Air Temperature"
+            description: "Outdoor air temperature at the intake. Signed 16-bit in 0.1 degC steps; raw 63066 signals a sensor fault. (Temperatura Czerpni)"
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 104 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: degC
+            na_values: [{ raw: 63066, meaning: sensor_fault }]
+            measurand: { base_quantity: temperature }
+
+          - point_id: temperature_extract
+            name: "Extract Air Temperature"
+            description: "Air temperature extracted from the building. Signed 16-bit in 0.1 degC steps; raw 63066 signals a sensor fault. (Temperatura Wywiewu)"
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 105 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: degC
+            na_values: [{ raw: 63066, meaning: sensor_fault }]
+            measurand: { base_quantity: temperature }
+
+          - point_id: temperature_supply
+            name: "Supply Air Temperature"
+            description: "Air temperature supplied to the building. Signed 16-bit in 0.1 degC steps; raw 63066 signals a sensor fault. (Temperatura Nawiewu)"
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 106 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: degC
+            na_values: [{ raw: 63066, meaning: sensor_fault }]
+            measurand: { base_quantity: temperature }
+
+          - point_id: temperature_exhaust
+            name: "Exhaust Air Temperature"
+            description: "Air temperature discharged outdoors. Signed 16-bit in 0.1 degC steps; raw 63066 signals a sensor fault. (Temperatura Wyrzutni)"
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 107 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: degC
+            na_values: [{ raw: 63066, meaning: sensor_fault }]
+            measurand: { base_quantity: temperature }
+
+          - point_id: temperature_gwc
+            name: "Ground Heat Exchanger Temperature"
+            description: "Temperature at the ground heat exchanger (GWC). Signed 16-bit in 0.1 degC steps; raw 63066 signals a sensor fault. (Temperatura GWC)"
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 108 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: degC
+            na_values: [{ raw: 63066, meaning: sensor_fault }]
+            measurand: { base_quantity: temperature }
+
+          - point_id: temperature_heater_control
+            name: "Heater Control Temperature"
+            description: "Control temperature for the heater. Signed 16-bit in 0.1 degC steps; raw 63066 signals a sensor fault. (Temperatura Kontroli nagrzewnicy)"
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 109 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: degC
+            na_values: [{ raw: 63066, meaning: sensor_fault }]
+            measurand: { base_quantity: temperature }
+
+          - point_id: weekly_program_day
+            name: "Weekly Program Day Selector"
+            description: "Which day of the week the zone registers 111-120 refer to. Write this first, then read or write the zones (Dzień)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: weekday } }
+            mapping: { space: HOLDING_REGISTER, offset: 110 }
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4, 5, 6] } }
+
+          - point_id: zone0_start
+            name: "Zone 0 Start Time"
+            description: "Start of weekly-program zone 0 for the day selected in register 110, in minutes from midnight on a 15-minute grid. Always 0: zone 0 starts at midnight. The manual gives this register the single-value range 0. (Interwał strefy 0)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 111 }
+            unit: min
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 0, denominator: 1 }, max_value: { numerator: 0, denominator: 1 } } }
+
+          - point_id: zone1_start
+            name: "Zone 1 Start Time"
+            description: "Start of weekly-program zone 1 for the day selected in register 110, in minutes from midnight on a 15-minute grid. Documented range 15-1380 minutes, default 5*60. (Interwał strefy 1)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 112 }
+            unit: min
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 15, denominator: 1 }, max_value: { numerator: 1380, denominator: 1 }, step: { numerator: 15, denominator: 1 } } }
+
+          - point_id: zone2_start
+            name: "Zone 2 Start Time"
+            description: "Start of weekly-program zone 2 for the day selected in register 110, in minutes from midnight on a 15-minute grid. Documented range 30-1395 minutes, default 10*60. (Interwał strefy 2)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 113 }
+            unit: min
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 30, denominator: 1 }, max_value: { numerator: 1395, denominator: 1 }, step: { numerator: 15, denominator: 1 } } }
+
+          - point_id: zone3_start
+            name: "Zone 3 Start Time"
+            description: "Start of weekly-program zone 3 for the day selected in register 110, in minutes from midnight on a 15-minute grid. Documented range 45-1410 minutes, default 15*60. (Interwał strefy 3)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 114 }
+            unit: min
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 45, denominator: 1 }, max_value: { numerator: 1410, denominator: 1 }, step: { numerator: 15, denominator: 1 } } }
+
+          - point_id: zone4_start
+            name: "Zone 4 Start Time"
+            description: "Start of weekly-program zone 4 for the day selected in register 110, in minutes from midnight on a 15-minute grid. Documented range 60-1425 minutes, default 20*60. (Interwał strefy 4)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 115 }
+            unit: min
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 60, denominator: 1 }, max_value: { numerator: 1425, denominator: 1 }, step: { numerator: 15, denominator: 1 } } }
+
+          - point_id: zone0_fan_step
+            name: "Zone 0 Fan Step"
+            description: "Fan speed step used during weekly-program zone 0 for the day selected in register 110. Default 1. (Bieg Zadany 0)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 116 }
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3] } }
+
+          - point_id: zone1_fan_step
+            name: "Zone 1 Fan Step"
+            description: "Fan speed step used during weekly-program zone 1 for the day selected in register 110. Default 1. Documented range 0-3. (Bieg Zadany 1)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 117 }
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3] } }
+
+          - point_id: zone2_fan_step
+            name: "Zone 2 Fan Step"
+            description: "Fan speed step used during weekly-program zone 2 for the day selected in register 110. Default 1. Documented range 0-3. (Bieg Zadany 2)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 118 }
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3] } }
+
+          - point_id: zone3_fan_step
+            name: "Zone 3 Fan Step"
+            description: "Fan speed step used during weekly-program zone 3 for the day selected in register 110. Default 1. Documented range 0-3. (Bieg Zadany 3)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 119 }
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3] } }
+
+          - point_id: zone4_fan_step
+            name: "Zone 4 Fan Step"
+            description: "Fan speed step used during weekly-program zone 4 for the day selected in register 110. Default 1. Documented range 0-3. (Bieg Zadany 4)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 120 }
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3] } }
+
+          - point_id: device_address
+            name: "Modbus Address"
+            description: "Modbus slave address, range 1-254, default 1 (Adres Urządzenia)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 126 }
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 1, denominator: 1 }, max_value: { numerator: 254, denominator: 1 }, safety_note: "Changing the address drops the current connection; the controller answers on the new address immediately" } }
+
+          - point_id: baud_rate
+            name: "Baud Rate"
+            description: "Serial line speed. The register's documented default is 3 (38400 bps), which contradicts the 19200 bps given in the manual's transmission defaults (Baud Rate Urządzenia)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: baud_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 127 }
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4, 5], safety_note: "Changing the baud rate drops the current connection" } }
+
+          - point_id: serial_frame
+            name: "Serial Frame Format"
+            description: "Parity, data bits and stop bits, default 1 (even parity, 8 data bits, 1 stop bit). The range is printed as 0-6 but only the six values 0-5 are listed (Parametry Urządzenia)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: serial_frame } }
+            mapping: { space: HOLDING_REGISTER, offset: 128 }
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3, 4, 5], safety_note: "Changing the frame format drops the current connection" } }
+
+          - point_id: gwc_active
+            name: "Ground Heat Exchanger Active"
+            description: "Whether the ground heat exchanger is currently running. Shown as an icon on the controller. (GWC)"
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 131 }
+            measurand: { base_quantity: device_status }
+
+          - point_id: summer_mode_active
+            name: "Summer Mode Active"
+            description: "Whether summer mode is currently running. Shown as an icon on the controller. (Tryb letni)"
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 132 }
+            measurand: { base_quantity: device_status }
+
+          - point_id: holiday_active
+            name: "Holiday Mode Active"
+            description: "Whether holiday mode is currently running. Shown as an icon on the controller. (Urlop)"
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 133 }
+            measurand: { base_quantity: device_status }
+
+          - point_id: filter_days_remaining
+            name: "Filter Days Remaining"
+            description: "Filter condition as a number of days, range 0-180 (Stan Filtrów (dni))."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 134 }
+
+          - point_id: alarm_active
+            name: "Alarm Active"
+            description: "Whether an alarm is present. Shown as an icon on the controller; the manual's error bit table is not mapped to any register, see the header (Alarm)."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 135 }
+            measurand: { base_quantity: alarm_status }
+
+          - point_id: gwc_enable
+            name: "Ground Heat Exchanger Enable"
+            description: "Enable or disable the ground heat exchanger (GWC)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 136 }
+            write: { behavior: DIRECT }
+
+          - point_id: summer_mode_enable
+            name: "Summer Mode Enable"
+            description: "Enable or disable summer mode, which bypasses heat recovery (Tryb letni)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 137 }
+            write: { behavior: DIRECT }
+
+          - point_id: holiday_days
+            name: "Holiday Duration"
+            description: "Holiday mode duration in days, range 0-60 (Urlop dni)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 138 }
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 0, denominator: 1 }, max_value: { numerator: 60, denominator: 1 } } }
+
+          - point_id: fireplace_time
+            name: "Fireplace Function Duration"
+            description: "Duration of the fireplace function, range 0-180 seconds (Funkcja palenisko)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 139 }
+            unit: s
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 0, denominator: 1 }, max_value: { numerator: 180, denominator: 1 } } }
+
+          - point_id: party_time
+            name: "Party Function Duration"
+            description: "Duration of the party function, documented range 0-720. The unit is left unset because the manual's comment on this row (\"0-180 seconds\") belongs to register 139 and contradicts the range; 0-720 minutes is the sensible reading (Funkcja party)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 140 }
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 0, denominator: 1 }, max_value: { numerator: 720, denominator: 1 } } }
+
+          - point_id: alarm_input
+            name: "Alarm Panel Input"
+            description: "State of the alarm-panel digital input. Closing the contact switches both fans to the alarm speed step (Alarm Wejście cyfrowe)."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 141 }
+
+          - point_id: bathroom_switch_input
+            name: "Bathroom Switch Input"
+            description: "State of the bathroom-switch digital input. Closing the contact runs the fans at the configured step for the configured time (Przełącznik łazienkowy Wej. cyfrowe)."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 142 }
+
+          - point_id: date
+            name: "Date"
+            description: "Controller date packed into one register: day in bits 11-15, month in bits 7-10, year in bits 0-6 as the year minus 2000. The manual's example, 31.01.2022, is 0xF896 (Data)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 143 }
+            fields:
+              - field_id: day
+                name: "Day of Month"
+                bit_offset: 11
+                bit_length: 5
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+              - field_id: month
+                name: "Month"
+                bit_offset: 7
+                bit_length: 4
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+              - field_id: year
+                name: "Year Minus 2000"
+                bit_offset: 0
+                bit_length: 7
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+            write: { behavior: DIRECT }
+
+          - point_id: time
+            name: "Time of Day"
+            description: "Controller time packed into one register: hour in bits 8-15, minute in bits 0-7. The manual's example, 01:30, is 0x011E (Godzina)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 144 }
+            fields:
+              - field_id: hour
+                name: "Hour"
+                bit_offset: 8
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: h
+              - field_id: minute
+                name: "Minute"
+                bit_offset: 0
+                bit_length: 8
+                storage_type: U16
+                value_type: { primitive: UINT32 }
+                unit: min
+            write: { behavior: DIRECT }
+
+          - point_id: secondary_heater_enable
+            name: "Secondary Heater Enable"
+            description: "Enable or disable the secondary heater. The manual leaves this row's access cell empty; every other enable register in the table is R/W and this one has a documented default, so it is modelled READ_WRITE (Nagrzewnica Wtórna)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 145 }
+            write: { behavior: DIRECT }
+
+          - point_id: antifreeze_active
+            name: "Anti-Freeze Active"
+            description: "Whether exchanger anti-freeze protection is currently running. Shown as an icon on the controller (Antyzamarzanie)."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 146 }
+            measurand: { base_quantity: device_status }
+
+          - point_id: temperature_secondary_heating
+            name: "Secondary Heating Temperature"
+            description: "Temperature measured by the secondary heating sensor. Signed 16-bit in 0.1 degC steps; raw 63066 signals a sensor fault. (Czujnik temperatury Grzania Wtórnego)"
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 147 }
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: degC
+            na_values: [{ raw: 63066, meaning: sensor_fault }]
+            measurand: { base_quantity: temperature }
+
+          - point_id: fire_input
+            name: "Fire Protection Input"
+            description: "State of the fire-protection digital input. Closing the contact stops both fans. (Pożarowe Wejście cyfrowe)"
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 148 }
+
+          - point_id: hood_input
+            name: "Cooker Hood Input"
+            description: "State of the cooker-hood digital input. Closing the contact stops the extract fan and runs the supply fan at the configured step. (Okap Wejście cyfrowe)"
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 149 }
+
+          - point_id: humidifier_input
+            name: "Humidifier Input"
+            description: "State of the humidifier digital input. (Nawilżacz wejście cyfrowe)"
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 150 }
+
+          - point_id: sensor_input
+            name: "CO2 / Humidity Sensor Input"
+            description: "State of the auxiliary CO2 or humidity sensor digital input. Closing the contact runs the fans at the configured step. (Czujniki Wejście cyfrowe)"
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 151 }
+
+          - point_id: weekly_schedule_enable
+            name: "Weekly Schedule Enable"
+            description: "Enable or disable control by the weekly program set up in registers 110-120 (Tygodniówka)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 152 }
+            write: { behavior: DIRECT }
+
+          - point_id: target_fan_step
+            name: "Target Fan Step"
+            description: "Fan speed step the unit is being asked to run at (Ustawienia biegu zadanego)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 153 }
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1, 2, 3] } }
+
+          - point_id: windows_enable
+            name: "Windows Function Enable"
+            description: "Enable or disable the windows function. (Okna)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 154 }
+            write: { behavior: DIRECT }
+
+          - point_id: humidifier_enable
+            name: "Humidifier Enable"
+            description: "Enable or disable the humidifier. (Nawilżacz)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 155 }
+            write: { behavior: DIRECT }
+
+          - point_id: humidifier_heater_enable
+            name: "Humidifier Heater Enable"
+            description: "Enable or disable the humidifier's heater. It runs when the supply temperature drops below the heater start temperature and stops at the heater setpoint. (Nagrzewnica Nawilżacza)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 156 }
+            write: { behavior: DIRECT }
+
+          - point_id: fan_step1_power
+            name: "Fan Step 1 Power"
+            description: "Fan power for speed step 1, range 1-100 %. Only settable while flow balancing (register 164) is off; the controller hides these values when it is on. Steps are nested: the manual's example is that setting step 2 to 47 % caps step 1 at 47 % and floors step 3 at 47 %. (Moc biegu 1)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 157 }
+            unit: "%"
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 1, denominator: 1 }, max_value: { numerator: 100, denominator: 1 } } }
+
+          - point_id: fan_step2_power
+            name: "Fan Step 2 Power"
+            description: "Fan power for speed step 2, range 1-100 %. Only settable while flow balancing (register 164) is off; the controller hides these values when it is on. Steps are nested: the manual's example is that setting step 2 to 47 % caps step 1 at 47 % and floors step 3 at 47 %. (Moc biegu 2)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 158 }
+            unit: "%"
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 1, denominator: 1 }, max_value: { numerator: 100, denominator: 1 } } }
+
+          - point_id: fan_step3_power
+            name: "Fan Step 3 Power"
+            description: "Fan power for speed step 3, range 1-100 %. Only settable while flow balancing (register 164) is off; the controller hides these values when it is on. Steps are nested: the manual's example is that setting step 2 to 47 % caps step 1 at 47 % and floors step 3 at 47 %. (Moc biegu 3)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 159 }
+            unit: "%"
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 1, denominator: 1 }, max_value: { numerator: 100, denominator: 1 } } }
+
+          - point_id: fan_step1_flow
+            name: "Fan Step 1 Flow"
+            description: "Air flow for speed step 1 in m3/h. Available only while flow balancing (register 164) is on, and the settable range depends on the unit model. Steps are nested: the manual's example is that setting step 2 to 47 % caps step 1 at 47 % and floors step 3 at 47 %. (Przepływ biegu 1)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 160 }
+            write: { behavior: DIRECT, requires_enable_point: flow_balancing_enable }
+
+          - point_id: fan_step2_flow
+            name: "Fan Step 2 Flow"
+            description: "Air flow for speed step 2 in m3/h. Available only while flow balancing (register 164) is on, and the settable range depends on the unit model. Steps are nested: the manual's example is that setting step 2 to 47 % caps step 1 at 47 % and floors step 3 at 47 %. (Przepływ biegu 2)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 161 }
+            write: { behavior: DIRECT, requires_enable_point: flow_balancing_enable }
+
+          - point_id: fan_step3_flow
+            name: "Fan Step 3 Flow"
+            description: "Air flow for speed step 3 in m3/h. Available only while flow balancing (register 164) is on, and the settable range depends on the unit model. Steps are nested: the manual's example is that setting step 2 to 47 % caps step 1 at 47 % and floors step 3 at 47 %. (Przepływ biegu 3)"
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 162 }
+            write: { behavior: DIRECT, requires_enable_point: flow_balancing_enable }
+
+          - point_id: flow_balancing_enable
+            name: "Flow Balancing Enable"
+            description: "Enable or disable flow stabilisation. With it on, the per-step air flows (registers 160-162) apply and supply/extract correction is unavailable; with it off, the per-step power values (registers 157-159) apply instead (Flow Balancing)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 164 }
+            write: { behavior: DIRECT }
+
+          - point_id: filter_runtime
+            name: "Filter Running Time"
+            description: "Filter running time, the controller's current filter state. The manual gives neither a unit nor a range (Czas pracy filtrów)."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 165 }
+
+          - point_id: software_version
+            name: "Software Version"
+            description: "Controller firmware version. The manual gives no encoding (Wersja oprogramowania)."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 166 }
+
+          - point_id: unit_size
+            name: "Selected Unit Size"
+            description: "Which ventilation unit model the controller is configured for. The manual gives no value list (Rozmiar wybranej centrali)."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 167 }
+
+          - point_id: summer_mode_low_temp
+            name: "Summer Mode Lower Activation Temperature"
+            description: "Outdoor temperature above which summer mode may engage, range 10-30 degC in whole degrees. Unlike the measured temperatures this register is not scaled (Tryb letni dolna temp. załączenia)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 168 }
+            unit: degC
+            measurand: { base_quantity: temperature }
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 10, denominator: 1 }, max_value: { numerator: 30, denominator: 1 } } }
+
+          - point_id: summer_mode_comfort_temp
+            name: "Summer Mode Comfort Temperature"
+            description: "Comfort temperature targeted in summer mode, range 18-25 degC in whole degrees. Unlike the measured temperatures this register is not scaled (Tryb letni temp. komfortu)."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 169 }
+            unit: degC
+            measurand: { base_quantity: temperature }
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 18, denominator: 1 }, max_value: { numerator: 25, denominator: 1 } } }
+
+
+    commands:
+      # Registers 111-120 are a window onto one day's weekly program and
+      # register 110 picks the day, so neither reading nor writing a day's
+      # schedule is a single operation. Both commands set the day selector
+      # first. Zone 0 always starts at midnight, so its start time is not a
+      # parameter.
+      - command_id: write_weekly_program
+        name: "Write One Day's Weekly Program"
+        description: "Set the five zone boundaries and their fan speed steps for one day of the week. Selects the day in register 110, then writes the four movable zone start times (zone 0 is fixed at midnight) and the five fan steps. Start times are minutes from midnight on a 15-minute grid and must stay inside the per-zone ranges the manual gives, which overlap deliberately: zone 1 is 15-1380, zone 2 is 30-1395, zone 3 is 45-1410 and zone 4 is 60-1425."
+        params:
+          - field: day
+            storage_type: U16
+            value_type: { enum_ref: { type_id: weekday } }
+            mapping: { space: HOLDING_REGISTER, offset: 110 }
+            required: true
+          - field: zone1_start
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 112 }
+            required: true
+          - field: zone2_start
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 113 }
+            required: true
+          - field: zone3_start
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 114 }
+            required: true
+          - field: zone4_start
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 115 }
+            required: true
+          - field: zone0_fan_step
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 116 }
+            required: true
+          - field: zone1_fan_step
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 117 }
+            required: true
+          - field: zone2_fan_step
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 118 }
+            required: true
+          - field: zone3_fan_step
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 119 }
+            required: true
+          - field: zone4_fan_step
+            storage_type: U16
+            value_type: { enum_ref: { type_id: fan_step } }
+            mapping: { space: HOLDING_REGISTER, offset: 120 }
+            required: true
+        steps:
+          - name: select_day
+            write: { param: day }
+          - name: write_zone1_start
+            write: { param: zone1_start }
+          - name: write_zone2_start
+            write: { param: zone2_start }
+          - name: write_zone3_start
+            write: { param: zone3_start }
+          - name: write_zone4_start
+            write: { param: zone4_start }
+          - name: write_zone0_fan_step
+            write: { param: zone0_fan_step }
+          - name: write_zone1_fan_step
+            write: { param: zone1_fan_step }
+          - name: write_zone2_fan_step
+            write: { param: zone2_fan_step }
+          - name: write_zone3_fan_step
+            write: { param: zone3_fan_step }
+          - name: write_zone4_fan_step
+            write: { param: zone4_fan_step }
+        results:
+          - field: day
+            from: weekly_program_day
+            enum_ref: { type_id: weekday }
+          - field: zone1_start
+            from: zone1_start
+            value_type: { primitive: UINT32 }
+          - field: zone2_start
+            from: zone2_start
+            value_type: { primitive: UINT32 }
+          - field: zone3_start
+            from: zone3_start
+            value_type: { primitive: UINT32 }
+          - field: zone4_start
+            from: zone4_start
+            value_type: { primitive: UINT32 }
+
+      - command_id: read_weekly_program
+        name: "Read One Day's Weekly Program"
+        description: "Read back the five zone boundaries and fan speed steps for one day of the week. Selects the day in register 110, then reads registers 111-120. Needed because the zone registers on their own do not say which day they belong to."
+        params:
+          - field: day
+            storage_type: U16
+            value_type: { enum_ref: { type_id: weekday } }
+            mapping: { space: HOLDING_REGISTER, offset: 110 }
+            required: true
+        steps:
+          - name: select_day
+            write: { param: day }
+          - name: read_zone0_start
+            read: { point_id: zone0_start, into: zone0_start }
+          - name: read_zone1_start
+            read: { point_id: zone1_start, into: zone1_start }
+          - name: read_zone2_start
+            read: { point_id: zone2_start, into: zone2_start }
+          - name: read_zone3_start
+            read: { point_id: zone3_start, into: zone3_start }
+          - name: read_zone4_start
+            read: { point_id: zone4_start, into: zone4_start }
+          - name: read_zone0_fan_step
+            read: { point_id: zone0_fan_step, into: zone0_fan_step }
+          - name: read_zone1_fan_step
+            read: { point_id: zone1_fan_step, into: zone1_fan_step }
+          - name: read_zone2_fan_step
+            read: { point_id: zone2_fan_step, into: zone2_fan_step }
+          - name: read_zone3_fan_step
+            read: { point_id: zone3_fan_step, into: zone3_fan_step }
+          - name: read_zone4_fan_step
+            read: { point_id: zone4_fan_step, into: zone4_fan_step }
+        results:
+          - field: zone0_start
+            from: zone0_start
+            value_type: { primitive: UINT32 }
+          - field: zone1_start
+            from: zone1_start
+            value_type: { primitive: UINT32 }
+          - field: zone2_start
+            from: zone2_start
+            value_type: { primitive: UINT32 }
+          - field: zone3_start
+            from: zone3_start
+            value_type: { primitive: UINT32 }
+          - field: zone4_start
+            from: zone4_start
+            value_type: { primitive: UINT32 }
+          - field: zone0_fan_step
+            from: zone0_fan_step
+            enum_ref: { type_id: fan_step }
+          - field: zone1_fan_step
+            from: zone1_fan_step
+            enum_ref: { type_id: fan_step }
+          - field: zone2_fan_step
+            from: zone2_fan_step
+            enum_ref: { type_id: fan_step }
+          - field: zone3_fan_step
+            from: zone3_fan_step
+            enum_ref: { type_id: fan_step }
+          - field: zone4_fan_step
+            from: zone4_fan_step
+            enum_ref: { type_id: fan_step }

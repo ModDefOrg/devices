@@ -690,3 +690,25 @@ devices:
   - frequency
   - energy_active
   - energy_reactive
+- vendor: TECH Sterowniki
+  model: ST-340 V2 DRO (HRV controller)
+  category: hvac
+  doc_id: tech.st340v2-dro
+  profile: hvac/tech-st340v2-dro/tech-st340v2-dro.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 62
+  status: vendor-confirmed
+  source: 'TECH Sterowniki ST-340 V2 DRO user manual rev. 1.0.8 (Wieprz, 2024-10-16), section 7
+    "Modbus" — the complete parameter table, registers 100-169: air flow and fan speed step per
+    duct, the six air and heater temperatures, the five-zone weekly program behind its day
+    selector, serial settings, ground-heat-exchanger / summer / holiday / party / fireplace modes,
+    the six digital inputs, packed date and time registers, secondary heater and humidifier,
+    per-step fan power and air flow with flow balancing, and the summer-mode setpoints. The
+    register table exists only as raster screenshots in the PDF and was transcribed by reading
+    them. Controller for a heat-recovery ventilation unit (rekuperator), not a heat pump'
+  source_url: https://www.techsterowniki.pl/
+  measurands:
+  - temperature
+  - device_status
+  - alarm_status

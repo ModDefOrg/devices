@@ -40,6 +40,7 @@ shakes out bugs in the stdlib and the codec before the registry grows.
 | Victron Venus OS GX | battery-storage | BESS via a gateway: Modbus TCP, `default_unit_id`, signed registers, an overlay block for the directional views of a signed register |
 | ABB Terra AC Wallbox | ev-charger | Write side: a R/W current setpoint and the watchdog timeout register with constraints, a COMMAND start/stop, a charging-state enum |
 | Daikin Altherma 3 | hvac | Heat pump behind a Modbus gateway: signed temperature scaling, mode/status enums, status bit fields, a R/W setpoint |
+| TECH ST-340 V2 DRO | hvac | Heat-recovery ventilation: a day-selector register that repoints the weekly-program registers, driven by read and write commands; `requires_enable_point` gating; a register map that exists only as screenshots |
 | Eastron SDM630 | energy-meter | IEEE-754 floats in input registers, per-phase measurands |
 | Carlo Gavazzi EM24-DIN | energy-meter | Integer registers with little-endian **word order** (the word-swap case), integer scaling |
 | ABB B23 | energy-meter | The wide one: U32/U64 energy, signed power, sentinels, an ASCII string field, multi-flag status registers, a date/time register |
@@ -67,12 +68,14 @@ shakes out bugs in the stdlib and the codec before the registry grows.
 | Measurand qualifiers (phase/direction/aggregation/location/accumulation) | across the set |
 | Modbus TCP + `default_unit_id` + overlay block | Victron Venus OS |
 | Composed mantissa/exponent (§14) incl. embedded decade exponent (§14.2) | Iskra WM3M4 |
-| Multi-step command procedures (§11.7): params, trigger writes, poll conditions | Bauer BSM, Iskra WM3M4, Growatt SPH, Fronius GEN24, Sigenergy SigenStor, ABB Terra AC, Eastron SDM630, Webasto Next |
+| Multi-step command procedures (§11.7): params, trigger writes, poll conditions | Bauer BSM, Iskra WM3M4, Growatt SPH, Fronius GEN24, Sigenergy SigenStor, ABB Terra AC, Eastron SDM630, Webasto Next, TECH ST-340 V2 |
 | Dynamic read length (`length_ref`, §11.7.1) | Iskra WM3M4 |
 | `COIL` space (read-only alarm bits, FC01) | Phoenix Contact EEM-EM3xx |
 | Typed register sub-fields (`fields`, §13.1) over a composite write word | Phoenix Contact EEM-EM3xx |
 | Device variants (§18, `removals`) | Phoenix Contact EEM-EM3xx, YTL DDS353H |
 | Repeating array with `stride_words` (§14.1) | YTL DDS353H |
+| Sentinel + signed scaled temperatures (`na_values` on `S16`) | TECH ST-340 V2 |
+| `requires_enable_point` write gating | TECH ST-340 V2 |
 
 Patterns these profiles don't reach yet (`DISCRETE_INPUT`, `selector_ref`,
 `BCD`, `U24/U48`) are covered by the golden fixtures and codec tests in the
