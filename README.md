@@ -43,6 +43,7 @@ shakes out bugs in the stdlib and the codec before the registry grows.
 | TECH ST-340 V2 DRO | hvac | Heat-recovery ventilation: a day-selector register that repoints the weekly-program registers, driven by read and write commands; `requires_enable_point` gating; a register map that exists only as screenshots |
 | Eastron SDM630 | energy-meter | IEEE-754 floats in input registers, per-phase measurands |
 | Carlo Gavazzi EM24-DIN | energy-meter | Integer registers with little-endian **word order** (the word-swap case), integer scaling |
+| Carlo Gavazzi EM111 MV5 | energy-meter | Single-phase: the same values in two documented views, S64 totalizers, an integer/decimal split total, and a serial number stored one ASCII char per register |
 | ABB B23 | energy-meter | The wide one: U32/U64 energy, signed power, sentinels, an ASCII string field, multi-flag status registers, a date/time register |
 | Iskra WM3M4 | energy-meter | Composed values: T5/T6 embedded decade exponent (same-word mantissa/exponent bit windows, §14.2) and interleaved mantissa/exponent energy-total pools |
 | Phoenix Contact EEM-EM3xx | energy-meter | The complete one: all 23 appendix tables, `COIL` alarm bits, a `DeviceVariant`, and the same measurement exposed as scaled integer, float and display register |

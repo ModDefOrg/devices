@@ -712,3 +712,32 @@ devices:
   - temperature
   - device_status
   - alarm_status
+- vendor: Carlo Gavazzi
+  model: EM111 MV5 (single-phase)
+  category: energy-meter
+  doc_id: carlogavazzi.em111
+  profile: energy-meter/carlo-gavazzi-em111/carlo-gavazzi-em111.moddef.yaml
+  transports:
+  - MODBUS_RTU
+  points: 72
+  status: vendor-confirmed
+  source: 'Carlo Gavazzi EM111 MV5 Communication Protocol, Modbus/JBUS RTU, v2 rev. 12 (2024-05-29)
+    — both documented views of the instantaneous values (tables 2.4-1 at 0000h and 2.4-2 at 0100h,
+    which the document calls equivalent copies), the integer/decimal split totalizers (2.4-3) and
+    the 64-bit totalizers (2.4-4) that exist from firmware b.10 on 2020-and-later units, firmware
+    version, and every writable programming menu: password, measuring system and CT primary,
+    demand and pulse outputs, display and measurement mode, serial port, the two reset commands,
+    serial number and production year. Registers the document marks "Not available, value =0" are
+    omitted, as are the ET112 hour counter and its reset and the tariff-selection menu the document
+    marks unavailable on EM111-112'
+  source_url: https://www.gavazziautomation.com/fileadmin/images/PIM/OTHERSTUFF/COMPRO/EM111%20-%20MV5%20model%20-%20Modbus%20serial%20protocol%20rev.2.12.pdf
+  measurands:
+  - voltage
+  - current
+  - active_power
+  - reactive_power
+  - apparent_power
+  - power_factor
+  - frequency
+  - energy_active
+  - energy_reactive

@@ -1,0 +1,1036 @@
+# Source: Carlo Gavazzi "EM111 MV5 Communication Protocol", Modbus/JBUS (RTU),
+# version 2 revision 12 (2024-05-29).
+# https://www.gavazziautomation.com/fileadmin/images/PIM/OTHERSTUFF/COMPRO/EM111%20-%20MV5%20model%20-%20Modbus%20serial%20protocol%20rev.2.12.pdf
+# Register map confirmed against the vendor document above; not yet hardware-verified.
+# Part of the ModDef blessed device registry.
+#
+# Single-phase DIN-rail energy meter, EM111-DIN MV5 1 X S1 X (CG identification
+# code 116). The document is written for the whole EM/ET100 series, so several
+# registers it lists belong to sibling models; each of those is called out below.
+#
+# Address convention (doc section 1.2, same as the other Carlo Gavazzi profiles
+# here):
+#   Every register is listed twice, as a 6-digit "Modicom" address read with FC04
+#   and as a "Physical address" that is the 0-based word offset placed in the
+#   frame (Modicom 300001 = physical 0000h). The document states FC03 and FC04
+#   "have exactly the same effect and can be used indifferently". Read-only
+#   tables are modelled in INPUT_REGISTER space and the writable programming
+#   menus in HOLDING_REGISTER space (FC03 read, FC06 write single register). The
+#   ModDef offset is the physical word address in both cases.
+#
+# Numeric encoding (doc section 2.1):
+#   Byte order inside a word is MSB->LSB (BIG_ENDIAN). For INT32, UINT32 and
+#   INT64 the word order is LSW->MSW, so word_order is WORD_LITTLE_ENDIAN
+#   throughout. The "Value weight" column gives a static integer scale
+#   (Volt*10, Ampere*1000, Watt*10, PF*1000, Hz*10, kWh*10, hours*100),
+#   modelled as scale 1/weight.
+#   Over-range reads 7FFFFFFFh, which the meter also shows as "EEE" on the
+#   display. That raw value is an na_value on every scaled INT32 measurement.
+#
+# Two views of the same data. The document's tables 2.4-1 (physical 0000h) and
+# 2.4-2 (physical 0100h) are, in its own words, "equivalent and, apart from the
+# Hour counter register, includes a copy of the same variable values". Both are
+# transcribed, because both are documented and either can be polled; the 0100h
+# view carries the `_sys` suffix. Note the two disagree on width: PF and Hz are
+# INT16 at 000Eh and 000Fh but INT32 at 010Ch and 0110h.
+#
+# Sign convention (doc section 2.2). In easy-connection mode the communication
+# port always reports positive A, W and var and kWh only ever increases. In
+# bidirectional mode the signs follow the quadrant and kWh(+)/kWh(-) split.
+# Which mode applies is set by register 1103h. The import/export directions on
+# the measurands here describe the bidirectional case.
+#
+# Interpretation notes -- where the document is ambiguous or model-specific:
+#   - Carlo Gavazzi identification code. Table 2.6-1 puts it at physical 000Bh,
+#     but table 2.4-1 has "W dmd" as a 2-word INT32 at 000Ah, which covers
+#     000Ah and 000Bh. The two overlap. Following the same call made in the
+#     EM24 profile in this registry, the identification code is omitted rather
+#     than modelled over the second word of a documented INT32.
+#   - The INT64 totalizers in table 2.4-4 have no "Value weight" column at all,
+#     only the byte and word order. They are scaled 1/10 here, the same weight
+#     the 32-bit totalizers of the same quantities carry. That is an inference.
+#   - Tables 2.4-3 and 2.4-4 exist "only in EM111 and EM112 model from firmware
+#     revision b.10" and only in instruments built from 2020-01-01 (serial
+#     YR2020 001xxxU and up). Reading an address the meter does not implement
+#     returns an illegal-data-address exception, so a client should probe before
+#     relying on either block.
+#   - Table 2.4-3 splits each total into an integer part and a decimal part; the
+#     real value is integer + decimal/1000. They are two separate points here
+#     because the pair is not a mantissa/exponent composition.
+#   - Registers marked "Not available, value =0" throughout tables 2.4-1 to
+#     2.4-4 are left out: kWh(+) t3 to t8, kWh(-) and kvarh(-) PARTIAL in the
+#     32-bit tables, kVAh TOT and PARTIAL, THD A, THD V L-N, and every row
+#     labelled n.a.
+#   - Omitted as belonging to sibling models: the hour counter at 002Ch and its
+#     reset command at 4002h (ET112 only), and the whole active-tariff selection
+#     menu at 1200h, which the document marks "not available in EM111-112".
+#     Display mode (1100h) and home page (1102h) are marked EM112-only but are
+#     kept, because they sit inside a menu whose other registers do apply and
+#     the document says they simply read 0 elsewhere.
+#   - Register 1103h (measurement mode) has a documented quirk added in revision
+#     2.12: writing the same value twice or more toggles the mode rather than
+#     setting it. Treat it as a toggle, not a setpoint.
+#   - The serial number at 5000h to 5006h is seven registers holding one ASCII
+#     character each in the low byte, with the high byte explicitly "not to be
+#     used". That is not the two-characters-per-word packing STRING_ASCII
+#     assumes, so it is modelled as a raw byte range with the layout in its
+#     description.
+#   - Timing (doc section 1.3.2): typical response 40 ms, maximum 500 ms, and a
+#     minimum gap of 3.5 character times before a new query. A single request
+#     may read at most 50 words, which register 2004h reports.
+#   - Broadcast writes go to address 00h.
+
+doc_id: carlogavazzi.em111
+name: Carlo Gavazzi EM111 MV5 Single-Phase Energy Meter
+version: 1.0.0
+
+imports:
+  - uri: moddef:stdlib:measurands:1.0.0
+
+enums:
+  - type_id: measuring_system
+    name: Measuring System
+    description: Wiring system (register 1002h); the EM111 is single-phase only
+    values:
+      - { value: 0, name: SINGLE_PHASE, description: "1P, single phase" }
+
+  - type_id: pulse_ton
+    name: Pulse Output Ton
+    description: Pulse output on-time for the square wave (register 1012h)
+    values:
+      - { value: 0, name: MS_30, description: 30 ms }
+      - { value: 1, name: MS_100, description: 100 ms }
+
+  - type_id: display_mode
+    name: Display Mode
+    description: Display layout (register 1100h, EM112 only)
+    values:
+      - { value: 0, name: FULL, description: "Full (default)" }
+      - { value: 1, name: EASY, description: Easy }
+
+  - type_id: measurement_mode
+    name: Measurement Mode
+    description: Sign convention for the measurements (register 1103h)
+    values:
+      - { value: 0, name: MODE_A_EASY_CONNECTION, description: "A, easy connection: current, power and energy are always positive" }
+      - { value: 1, name: MODE_B_BIDIRECTIONAL, description: "B, bidirectional: signs follow the quadrant and energy splits into (+) and (-)" }
+
+  - type_id: baud_rate
+    name: Baud Rate
+    description: RS485 line speed (register 2001h)
+    values:
+      - { value: 1, name: BPS_9600, description: "9.6 kbps (default)" }
+      - { value: 2, name: BPS_19200, description: 19.2 kbps }
+      - { value: 3, name: BPS_38400, description: 38.4 kbps }
+      - { value: 4, name: BPS_57600, description: 57.6 kbps }
+      - { value: 5, name: BPS_115200, description: 115.2 kbps }
+
+  - type_id: parity
+    name: Parity
+    description: RS485 parity (register 2002h)
+    values:
+      - { value: 1, name: NONE, description: "No parity (default)" }
+      - { value: 2, name: EVEN, description: Even parity }
+
+  - type_id: stop_bits
+    name: Stop Bits
+    description: RS485 stop bits (register 2003h); two stop bits are only accepted when parity is even
+    values:
+      - { value: 1, name: ONE, description: "1 stop bit (default)" }
+      - { value: 2, name: TWO, description: 2 stop bits }
+
+devices:
+  - device_id: carlo-gavazzi-em111
+    vendor: Carlo Gavazzi
+    model: EM111 MV5
+    supported_transports:
+      - MODBUS_RTU
+    blocks:
+
+      # Document table 2.4-1. 001Ch-001Fh (kWh(+) t3 and t4), 0024h-0027h (negative
+      # partials) and 0028h-002Bh (kVAh) all read 0 on this model and are left out;
+      # 002Ch (hour counter) is ET112 only. 000Bh, the second word of W dmd, is also
+      # where the document puts the Carlo Gavazzi identification code; see the header.
+      - block_id: instantaneous
+        name: "Instantaneous Variables and Meters (Table 2.4-1)"
+        space: INPUT_REGISTER
+        start_offset: 0 # 0x0000
+        length_words: 36
+        points:
+          - point_id: voltage
+            name: "Voltage L-N"
+            description: "Line-to-neutral RMS voltage."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 0, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0000
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: voltage }
+
+          - point_id: current
+            name: "Current"
+            description: "RMS current."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 2, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0002
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: current }
+
+          - point_id: active_power
+            name: "Active Power"
+            description: "Active power."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 4, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0004
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: active_power }
+
+          - point_id: apparent_power
+            name: "Apparent Power"
+            description: "Apparent power."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 6, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0006
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: VA
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: apparent_power }
+
+          - point_id: reactive_power
+            name: "Reactive Power"
+            description: "Reactive power."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 8, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0008
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: var
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: reactive_power }
+
+          - point_id: active_power_demand
+            name: "Active Power Demand"
+            description: "Active power demand over the integration time set in register 1010h."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 10, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x000A
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: active_power, aggregation: AVERAGE, accumulation: INTERVAL }
+
+          - point_id: active_power_demand_peak
+            name: "Active Power Demand Peak"
+            description: "Highest active power demand recorded since the last reset."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 12, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x000C
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: active_power, aggregation: MAXIMUM }
+
+          - point_id: power_factor
+            name: "Power Factor"
+            description: "Power factor. INT16 here, unlike the INT32 copy at 010Ch."
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 14 } # 0x000E
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: "1"
+            measurand: { base_quantity: power_factor }
+
+          - point_id: frequency
+            name: "Frequency"
+            description: "Line frequency. INT16 here, unlike the INT32 copy at 0110h."
+            access: READ_ONLY
+            storage_type: S16
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 15 } # 0x000F
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: Hz
+            measurand: { base_quantity: frequency }
+
+          - point_id: energy_active_import_total
+            name: "Imported Active Energy Total"
+            description: "Total imported active energy. MID-relevant on non-X versions."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 16, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0010
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_reactive_import_total
+            name: "Imported Reactive Energy Total"
+            description: "Total imported reactive energy."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 18, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0012
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_active_import_partial
+            name: "Imported Active Energy Partial"
+            description: "Resettable imported active energy counter, cleared by the 4000h reset."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 20, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0014
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: energy_reactive_import_partial
+            name: "Imported Reactive Energy Partial"
+            description: "Resettable imported reactive energy counter, cleared by the 4000h reset."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 22, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0016
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: t1_energy_active_import
+            name: "Tariff 1 Imported Active Energy"
+            description: "Imported active energy accumulated under tariff 1."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 24, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0018
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: t2_energy_active_import
+            name: "Tariff 2 Imported Active Energy"
+            description: "Imported active energy accumulated under tariff 2."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 26, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x001A
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_active_export_total
+            name: "Exported Active Energy Total"
+            description: "Total exported active energy. Only accumulates in bidirectional measurement mode."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 32, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0020
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_reactive_export_total
+            name: "Exported Reactive Energy Total"
+            description: "Total exported reactive energy. Only accumulates in bidirectional measurement mode."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 34, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0022
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+
+      # Document table 2.4-2, the second view of the same values. 0104h, 010Eh,
+      # 011Eh-0146h, 014Ch-0150h and everything from 0156h on read 0 on this model
+      # and are left out. PF and Hz are INT32 here where table 2.4-1 has them as
+      # INT16.
+      - block_id: system_variables
+        name: "System Variables (Table 2.4-2)"
+        space: INPUT_REGISTER
+        start_offset: 256 # 0x0100
+        length_words: 86
+        points:
+          - point_id: current_sys
+            name: "Current (System View)"
+            description: "RMS current."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 256, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0100
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: A
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: current }
+
+          - point_id: voltage_sys
+            name: "Voltage L-N (System View)"
+            description: "Line-to-neutral RMS voltage."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 258, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0102
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: V
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: voltage }
+
+          - point_id: active_power_sys
+            name: "Active Power (System View)"
+            description: "Active power."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 262, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0106
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: active_power }
+
+          - point_id: apparent_power_sys
+            name: "Apparent Power (System View)"
+            description: "Apparent power."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 264, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0108
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: VA
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: apparent_power }
+
+          - point_id: reactive_power_sys
+            name: "Reactive Power (System View)"
+            description: "Reactive power."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 266, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x010A
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: var
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: reactive_power }
+
+          - point_id: power_factor_sys
+            name: "Power Factor (System View)"
+            description: "Power factor, INT32 in this table."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 268, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x010C
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: "1"
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: power_factor }
+
+          - point_id: frequency_sys
+            name: "Frequency (System View)"
+            description: "Line frequency, INT32 in this table."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 272, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0110
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: Hz
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: frequency }
+
+          - point_id: energy_active_import_total_sys
+            name: "Imported Active Energy Total (System View)"
+            description: "Second view of the same counter as in table 2.4-1."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 274, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0112
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_reactive_import_total_sys
+            name: "Imported Reactive Energy Total (System View)"
+            description: "Second view of the same counter as in table 2.4-1."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 276, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0114
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_active_export_total_sys
+            name: "Exported Active Energy Total (System View)"
+            description: "Second view of the same counter as in table 2.4-1."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 278, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0116
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_reactive_export_total_sys
+            name: "Exported Reactive Energy Total (System View)"
+            description: "Second view of the same counter as in table 2.4-1."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 280, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0118
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: active_power_demand_sys
+            name: "Active Power Demand (System View)"
+            description: "Active power demand over the integration time set in register 1010h."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 282, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x011A
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: active_power, aggregation: AVERAGE, accumulation: INTERVAL }
+
+          - point_id: active_power_demand_peak_sys
+            name: "Active Power Demand Peak (System View)"
+            description: "Highest active power demand recorded since the last reset."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 284, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x011C
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: W
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: active_power, aggregation: MAXIMUM }
+
+          - point_id: energy_active_import_partial_sys
+            name: "Imported Active Energy Partial (System View)"
+            description: "Second view of the same resettable counter as in table 2.4-1."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 328, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0148
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: energy_reactive_import_partial_sys
+            name: "Imported Reactive Energy Partial (System View)"
+            description: "Second view of the same resettable counter as in table 2.4-1."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 330, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x014A
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: t1_energy_active_import_sys
+            name: "Tariff 1 Imported Active Energy (System View)"
+            description: "Second view of the tariff 1 counter from table 2.4-1."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 338, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0152
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: t2_energy_active_import_sys
+            name: "Tariff 2 Imported Active Energy (System View)"
+            description: "Second view of the tariff 2 counter from table 2.4-1."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 340, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0154
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            na_values: [{ raw: 2147483647, meaning: over_range }]
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+
+      # Document table 2.4-3. Each total is split into an integer part and a decimal
+      # part; the value is integer + decimal/1000. Present only in EM111 and EM112
+      # from firmware revision b.10 and in instruments built from 2020-01-01.
+      - block_id: totalizers_split
+        name: "Integer/Decimal Totalizers (Table 2.4-3)"
+        space: INPUT_REGISTER
+        start_offset: 1024 # 0x0400
+        length_words: 16
+        points:
+          - point_id: energy_active_import_total_int
+            name: "Imported Active Energy Total, Integer Part"
+            description: "Whole kWh of the imported active total. For 1234.567 kWh this reads 1234."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1024, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0400
+            transform: { scale: { numerator: 1, denominator: 1 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_active_import_total_dec
+            name: "Imported Active Energy Total, Decimal Part"
+            description: "Thousandths of a kWh of the imported active total. For 1234.567 kWh this reads 567. The most significant word is always 0."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1026, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0402
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_reactive_import_total_int
+            name: "Imported Reactive Energy Total, Integer Part"
+            description: "Whole kvarh of the imported reactive total."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1028, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0404
+            transform: { scale: { numerator: 1, denominator: 1 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_reactive_import_total_dec
+            name: "Imported Reactive Energy Total, Decimal Part"
+            description: "Thousandths of a kvarh of the imported reactive total. The most significant word is always 0."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1030, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0406
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_active_export_total_int
+            name: "Exported Active Energy Total, Integer Part"
+            description: "Whole kWh of the exported active total. Reads 0 on PFA versions and on X versions set to measurement mode A."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1032, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0408
+            transform: { scale: { numerator: 1, denominator: 1 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_active_export_total_dec
+            name: "Exported Active Energy Total, Decimal Part"
+            description: "Thousandths of a kWh of the exported active total. Reads 0 on PFA versions and on X versions set to measurement mode A."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1034, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x040A
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_reactive_export_total_int
+            name: "Exported Reactive Energy Total, Integer Part"
+            description: "Whole kvarh of the exported reactive total. Reads 0 on PFA versions and on X versions set to measurement mode A."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1036, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x040C
+            transform: { scale: { numerator: 1, denominator: 1 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_reactive_export_total_dec
+            name: "Exported Reactive Energy Total, Decimal Part"
+            description: "Thousandths of a kvarh of the exported reactive total. Reads 0 on PFA versions and on X versions set to measurement mode A."
+            access: READ_ONLY
+            storage_type: S32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1038, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x040E
+            transform: { scale: { numerator: 1, denominator: 1000 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+
+      # Document table 2.4-4. Same availability as table 2.4-3: EM111 and EM112 from
+      # firmware b.10, instruments built from 2020-01-01. 0510h-051Bh and the kVAh
+      # pair at 052Ch-0533h read 0 and are left out. The table gives no value
+      # weight; 1/10 is taken from the 32-bit counters of the same quantities.
+      - block_id: totalizers_64
+        name: "64-bit Totalizers (Table 2.4-4)"
+        space: INPUT_REGISTER
+        start_offset: 1280 # 0x0500
+        length_words: 52
+        points:
+          - point_id: energy_active_import_total_64
+            name: "Imported Active Energy Total (64-bit)"
+            description: "64-bit copy of the counter of the same name, for masters that want headroom past the 32-bit rollover."
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1280, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0500
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_reactive_import_total_64
+            name: "Imported Reactive Energy Total (64-bit)"
+            description: "64-bit copy of the counter of the same name, for masters that want headroom past the 32-bit rollover."
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1284, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0504
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_active_import_partial_64
+            name: "Imported Active Energy Partial (64-bit)"
+            description: "64-bit copy of the counter of the same name, for masters that want headroom past the 32-bit rollover."
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1288, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0508
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: IMPORT, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: energy_reactive_import_partial_64
+            name: "Imported Reactive Energy Partial (64-bit)"
+            description: "64-bit copy of the counter of the same name, for masters that want headroom past the 32-bit rollover."
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1292, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x050C
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: IMPORT, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: energy_active_export_total_64
+            name: "Exported Active Energy Total (64-bit)"
+            description: "64-bit copy of the counter of the same name, for masters that want headroom past the 32-bit rollover."
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1308, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x051C
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_active_export_partial_64
+            name: "Exported Active Energy Partial (64-bit)"
+            description: "64-bit copy of the counter of the same name, for masters that want headroom past the 32-bit rollover."
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1312, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0520
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kWh
+            measurand: { base_quantity: energy_active, direction: EXPORT, accumulation: SESSION, aggregation: TOTAL }
+
+          - point_id: energy_reactive_export_total_64
+            name: "Exported Reactive Energy Total (64-bit)"
+            description: "64-bit copy of the counter of the same name, for masters that want headroom past the 32-bit rollover."
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1316, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0524
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: LIFETIME, aggregation: TOTAL }
+
+          - point_id: energy_reactive_export_partial_64
+            name: "Exported Reactive Energy Partial (64-bit)"
+            description: "64-bit copy of the counter of the same name, for masters that want headroom past the 32-bit rollover."
+            access: READ_ONLY
+            storage_type: S64
+            value_type: { primitive: DECIMAL }
+            mapping: { space: INPUT_REGISTER, offset: 1320, length_words: 4, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x0528
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: kvarh
+            measurand: { base_quantity: energy_reactive, direction: EXPORT, accumulation: SESSION, aggregation: TOTAL }
+
+
+      # Document table 2.5-1. Both registers are read one word at a time.
+      - block_id: version
+        name: "Firmware Version (Table 2.5-1)"
+        space: INPUT_REGISTER
+        start_offset: 770 # 0x0302
+        length_words: 2
+        points:
+          - point_id: version_code
+            name: "Version Code"
+            description: "Firmware version as a number: 3 means version \"d\"."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 770 } # 0x0302
+
+          - point_id: revision_code
+            name: "Revision Code"
+            description: "Firmware revision as a number: 0 means revision \"0\"."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 771 } # 0x0303
+
+
+      # Document table 2.7-1. Guards front-panel programming; the document does not
+      # make it a gate on Modbus writes.
+      - block_id: settings_password
+        name: "Password Menu (Table 2.7-1)"
+        space: HOLDING_REGISTER
+        start_offset: 4096 # 0x1000
+        length_words: 1
+        points:
+          - point_id: password
+            name: "Password"
+            description: "Front-panel password, 0 to 9999. EM models only; always 0 on ET models."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 4096 } # 0x1000
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 0, denominator: 1 }, max_value: { numerator: 9999, denominator: 1 } } }
+
+
+      # Document table 2.7-2.
+      - block_id: settings_system
+        name: "System and Primary Current Menu (Table 2.7-2)"
+        space: HOLDING_REGISTER
+        start_offset: 4098 # 0x1002
+        length_words: 3
+        points:
+          - point_id: measuring_system
+            name: "Measuring System"
+            description: "Wiring system. The EM111 documents only value 0, single phase."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: measuring_system } }
+            mapping: { space: HOLDING_REGISTER, offset: 4098 } # 0x1002
+            write: { behavior: DIRECT, constraints: { allowed_values: [0] } }
+
+          - point_id: primary_current
+            name: "Primary Current"
+            description: "CT primary current in tenths of an amp: 10 is 1 A and 6000 is 600 A. 600 A is the documented maximum for the MV5 model."
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: DECIMAL }
+            mapping: { space: HOLDING_REGISTER, offset: 4099, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x1003
+            transform: { scale: { numerator: 1, denominator: 10 } }
+            unit: A
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 1, denominator: 1 }, max_value: { numerator: 600, denominator: 1 }, safety_note: "Changing the CT ratio rescales every current, power and energy reading" } }
+
+
+      # Document table 2.7-3. 1014h-101Fh is not part of the menu. The document gives
+      # no Modicom addresses for these four registers, only physical ones.
+      - block_id: settings_dmd_pulse
+        name: "Demand and Pulse Output Menu (Table 2.7-3)"
+        space: HOLDING_REGISTER
+        start_offset: 4112 # 0x1010
+        length_words: 20
+        points:
+          - point_id: demand_integration_time
+            name: "Demand Integration Time"
+            description: "Integration window for the demand calculation, 1 to 30 minutes."
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 4112, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x1010
+            unit: min
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 1, denominator: 1 }, max_value: { numerator: 30, denominator: 1 } } }
+
+          - point_id: pulse_ton
+            name: "Pulse Output On-Time"
+            description: "Width of the pulse output square wave: 0 is 30 ms, 1 is 100 ms."
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { enum_ref: { type_id: pulse_ton } }
+            mapping: { space: HOLDING_REGISTER, offset: 4114, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x1012
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1] } }
+
+          - point_id: pulse1_kwh_per_pulse
+            name: "kWh per Pulse, Output 1"
+            description: "Energy per pulse on digital output 1, if that output exists on this model. The document gives no unit weight for this register."
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 4128, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x1020
+            write: { behavior: DIRECT }
+
+          - point_id: pulse2_kwh_per_pulse
+            name: "kWh per Pulse, Output 2"
+            description: "Energy per pulse on digital output 2, if that output exists on this model. The document gives no unit weight for this register."
+            access: READ_WRITE
+            storage_type: U32
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 4130, length_words: 2, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x1022
+            write: { behavior: DIRECT }
+
+
+      # Document table 2.7-4.
+      - block_id: settings_other
+        name: "Other Functions Menu (Table 2.7-4)"
+        space: HOLDING_REGISTER
+        start_offset: 4352 # 0x1100
+        length_words: 4
+        points:
+          - point_id: display_mode
+            name: "Display Mode"
+            description: "Display layout, EM112 only. Any value other than 0 or 1 is treated as Full."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: display_mode } }
+            mapping: { space: HOLDING_REGISTER, offset: 4352 } # 0x1100
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1] } }
+
+          - point_id: tariff_management_enable
+            name: "Tariff Management Enable"
+            description: "Whether tariff metering is active. Any value other than 0 or 1 is treated as OFF."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: BOOL }
+            mapping: { space: HOLDING_REGISTER, offset: 4353 } # 0x1101
+            write: { behavior: DIRECT }
+
+          - point_id: home_page
+            name: "Home Page"
+            description: "Which display page the meter returns to, 0 to 17. EM112 only; the document says it is always 0 on other models, and Easy display mode restricts the choice."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 4354 } # 0x1102
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 0, denominator: 1 }, max_value: { numerator: 17, denominator: 1 } } }
+
+          - point_id: measurement_mode
+            name: "Measurement Mode"
+            description: "Sign convention: 0 is easy connection, 1 is bidirectional. Any other value is treated as A. Documented quirk (revision 2.12): writing the same value twice or more toggles the mode instead of setting it, so this behaves as a toggle rather than a setpoint."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: measurement_mode } }
+            mapping: { space: HOLDING_REGISTER, offset: 4355 } # 0x1103
+            write: { behavior: DIRECT, constraints: { allowed_values: [0, 1], safety_note: "Writing the same value more than once toggles the measurement mode; read it back rather than writing blind" } }
+
+
+      # Document table 2.7-6.
+      - block_id: settings_serial
+        name: "Serial Port Menu (Table 2.7-6)"
+        space: HOLDING_REGISTER
+        start_offset: 8192 # 0x2000
+        length_words: 5
+        points:
+          - point_id: modbus_address
+            name: "Modbus Address"
+            description: "RS485 instrument address, 1 to 247, default 1. Address 0 is the broadcast address."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 8192 } # 0x2000
+            write: { behavior: DIRECT, constraints: { min_value: { numerator: 1, denominator: 1 }, max_value: { numerator: 247, denominator: 1 }, safety_note: "Changing the address drops the current connection; the meter answers on the new address immediately" } }
+
+          - point_id: baud_rate
+            name: "Baud Rate"
+            description: "RS485 line speed. Any value outside 1 to 5 is treated as 9.6 kbps."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: baud_rate } }
+            mapping: { space: HOLDING_REGISTER, offset: 8193 } # 0x2001
+            write: { behavior: DIRECT, constraints: { allowed_values: [1, 2, 3, 4, 5], safety_note: "Changing the baud rate drops the current connection" } }
+
+          - point_id: parity
+            name: "Parity"
+            description: "RS485 parity. Any value other than 1 or 2 is treated as no parity."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: parity } }
+            mapping: { space: HOLDING_REGISTER, offset: 8194 } # 0x2002
+            write: { behavior: DIRECT, constraints: { allowed_values: [1, 2], safety_note: "Changing the parity drops the current connection" } }
+
+          - point_id: stop_bits
+            name: "Stop Bits"
+            description: "RS485 stop bits. Two stop bits are only accepted when parity is even; otherwise the meter forces 1."
+            access: READ_WRITE
+            storage_type: U16
+            value_type: { enum_ref: { type_id: stop_bits } }
+            mapping: { space: HOLDING_REGISTER, offset: 8195 } # 0x2003
+            write: { behavior: DIRECT, constraints: { allowed_values: [1, 2], safety_note: "Changing the stop bits drops the current connection" } }
+
+          - point_id: max_words_per_request
+            name: "Maximum Words per Request"
+            description: "How many words the meter allows in one Modbus request. Reads 50 and is read-only despite sitting in a read/write menu."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 8196 } # 0x2004
+
+
+      # Document table 2.7-7. Write 1 to run; the register reads 0 once the reset is
+      # done, and any other value does nothing. 4002h (hour counter reset) is ET112
+      # only and is left out, as is the hour counter itself.
+      - block_id: commands
+        name: "Reset Commands (Table 2.7-7)"
+        space: HOLDING_REGISTER
+        start_offset: 16384 # 0x4000
+        length_words: 2
+        points:
+          - point_id: reset_partial_meters
+            name: "Reset Partial and Tariff Meters"
+            description: "Clears the partial meters, the tariff meters, the demand and the demand peak. Write 1 to run."
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16384 } # 0x4000
+            write: { behavior: COMMAND_TRIGGER, constraints: { allowed_values: [1], safety_note: "Irreversible; the total energy meters are unaffected" } }
+
+          - point_id: reset_total_meters
+            name: "Reset Total Energy Meters"
+            description: "Clears the total energy meters. Only available on non-MID versions, the X option. Write 1 to run."
+            access: COMMAND
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: HOLDING_REGISTER, offset: 16385 } # 0x4001
+            write: { behavior: COMMAND_TRIGGER, constraints: { allowed_values: [1], safety_note: "Irreversible and unavailable on MID-sealed versions; this clears the billing totals" } }
+
+
+      # Document tables 2.7-8 and 2.7-9. 5007h-500Fh is not part of either table.
+      - block_id: identity
+        name: "Serial Number and Production Year (Tables 2.7-8, 2.7-9)"
+        space: INPUT_REGISTER
+        start_offset: 20480 # 0x5000
+        length_words: 17
+        points:
+          - point_id: serial_number
+            name: "Serial Number"
+            description: "Seven-character serial number, one character per register from 5000h to 5006h. Each register holds the ASCII code in its low byte and the document says the high byte is \"not to be used\", so the characters are bytes 1, 3, 5, 7, 9, 11 and 13 of the 14-byte read. That is not the two-per-word packing STRING_ASCII assumes, hence the raw byte range."
+            access: READ_ONLY
+            storage_type: BYTES_RAW
+            value_type: { primitive: BYTES }
+            mapping: { space: INPUT_REGISTER, offset: 20480, length_words: 7, byte_order: BIG_ENDIAN, word_order: WORD_LITTLE_ENDIAN } # 0x5000
+
+          - point_id: production_year
+            name: "Production Year"
+            description: "Year of manufacture. Available only in EM111 units built from 2018-10-01, serial YR2018 274xxxS and up."
+            access: READ_ONLY
+            storage_type: U16
+            value_type: { primitive: UINT32 }
+            mapping: { space: INPUT_REGISTER, offset: 20496 } # 0x5010
